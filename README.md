@@ -42,3 +42,7 @@ Run the automated checks with:
 
 Android intentionally requires the user to enable and select every downloaded
 keyboard. The app cannot bypass those system screens.
+
+## License
+
+Tapziq is available under the [Apache License 2.0](LICENSE).
