@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="accent">#315DF4</color>
+    <color name="accent_pressed">#2447C8</color>
+    <color name="screen_background">#F6F7FB</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="primary_text">#171A21</color>
+    <color name="secondary_text">#5E6472</color>
+    <color name="keyboard_background">#DDE1E8</color>
+    <color name="key_background">#FFFFFF</color>
+    <color name="key_pressed">#CBD2DC</color>
+    <color name="special_key_background">#B8C0CC</color>
+    <color name="special_key_pressed">#A5AFBD</color>
+    <color name="shift_active">#315DF4</color>
+    <color name="shift_active_pressed">#2447C8</color>
+    <color name="key_text">#111318</color>
+    <color name="key_text_active">#FFFFFF</color>
+</resources>

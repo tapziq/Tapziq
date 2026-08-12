@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tapziq Keyboard</string>
+    <string name="ime_name">Tapziq Keyboard</string>
+    <string name="subtype_english_us">English (US)</string>
+    <string name="setup_title">Tapziq Keyboard</string>
+    <string name="setup_intro">A small, private keyboard with letters, numbers, and symbols.</string>
+    <string name="status_not_enabled">1 of 2 · Tapziq is not enabled yet</string>
+    <string name="status_enabled">1 of 2 complete · Tapziq is enabled</string>
+    <string name="status_selected">Ready · Tapziq is your current keyboard</string>
+    <string name="enable_keyboard">1. Enable Tapziq Keyboard</string>
+    <string name="choose_keyboard">2. Choose Tapziq Keyboard</string>
+    <string name="try_title">Try it here</string>
+    <string name="try_hint">Tap here and type</string>
+    <string name="privacy_title">Private by design</string>
+    <string name="privacy_body">Tapziq has no internet permission. It does not save typed text, read the clipboard, show ads, or use analytics.</string>
+    <string name="system_warning_note">Android shows a standard warning when any downloaded keyboard is enabled. Tapziq cannot enable or select itself; those choices stay under your control.</string>
+</resources>
