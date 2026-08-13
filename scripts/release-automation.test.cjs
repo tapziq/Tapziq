@@ -30,8 +30,27 @@ const packageScript = path.join(
   "scripts",
   "package-semantic-release.sh",
 );
+const sourceVersionScript = path.join(
+  repositoryRoot,
+  "scripts",
+  "prepare-release-version.cjs",
+);
+const {
+  prepareReleaseVersion,
+  semanticVersionCode,
+  sourceMetadata,
+  sourceWithVersion,
+} = require(sourceVersionScript);
+const sourceBuildScript = readFileSync(
+  path.join(repositoryRoot, "app", "build.gradle.kts"),
+  "utf8",
+);
 const publishedVerifierScript = readFileSync(
   path.join(repositoryRoot, "scripts", "verify-published-release.sh"),
+  "utf8",
+);
+const currentReleaseVerifierScript = readFileSync(
+  path.join(repositoryRoot, "scripts", "verify-current-release.sh"),
   "utf8",
 );
 const apkVerifierScript = readFileSync(
@@ -56,6 +75,7 @@ function createPackageFixture({
   tagTarget = "head",
   tagExists = true,
   outputSymlink = null,
+  sourceVersion = "0.1.1",
 } = {}) {
   const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "tapziq-package-test-"));
   const fixtureRepository = path.join(fixtureRoot, "repository");
@@ -72,7 +92,15 @@ function createPackageFixture({
     path.join(fixtureRepository, "app/build/outputs/apk/release/app-release.apk"),
     "fixture apk\n",
   );
+  writeFileSync(
+    path.join(fixtureRepository, "app", "build.gradle.kts"),
+    sourceWithVersion(sourceBuildScript, sourceVersion),
+  );
   cpSync(packageScript, path.join(fixtureRepository, "scripts", path.basename(packageScript)));
+  cpSync(
+    sourceVersionScript,
+    path.join(fixtureRepository, "scripts", path.basename(sourceVersionScript)),
+  );
   writeExecutable(
     path.join(fixtureRepository, "scripts", "semantic-version-code.sh"),
     "#!/usr/bin/env bash\nprintf '1001\\n'\n",
@@ -242,14 +270,27 @@ test("release configuration packages before publishing exact assets", () => {
       "@semantic-release/commit-analyzer",
       "@semantic-release/release-notes-generator",
       "@semantic-release/exec",
+      "@semantic-release/git",
       "@semantic-release/github",
     ],
   );
   assert.deepEqual(notesOptions, analyzerOptions);
   assert.equal(
     pluginEntries.get("@semantic-release/exec").prepareCmd,
+    "node ./scripts/prepare-release-version.cjs prepare "
+      + "${nextRelease.version} ${lastRelease.version}",
+  );
+  assert.equal(
+    pluginEntries.get("@semantic-release/exec").publishCmd,
     "./scripts/package-semantic-release.sh "
-      + "${nextRelease.version} ${nextRelease.gitHead}",
+      + "${nextRelease.version} ${nextRelease.gitHead} --allow-existing-tag",
+  );
+
+  const gitOptions = pluginEntries.get("@semantic-release/git");
+  assert.deepEqual(gitOptions.assets, ["app/build.gradle.kts"]);
+  assert.equal(
+    gitOptions.message,
+    "chore(release): ${nextRelease.version} [skip ci]",
   );
 
   const githubOptions = pluginEntries.get("@semantic-release/github");
@@ -326,7 +367,189 @@ test("semantic versions map to monotonic Android version codes", () => {
       expected,
       version,
     );
+    assert.equal(semanticVersionCode(version), BigInt(expected), version);
   }
+});
+
+function createVersionFixture() {
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "tapziq-version-test-"));
+  const fixtureRepository = path.join(fixtureRoot, "repository");
+  const fixtureRemote = path.join(fixtureRoot, "remote.git");
+  mkdirSync(path.join(fixtureRepository, "app"), { recursive: true });
+  writeFileSync(
+    path.join(fixtureRepository, "app", "build.gradle.kts"),
+    sourceBuildScript,
+  );
+  writeFileSync(path.join(fixtureRepository, "product.txt"), "baseline\n");
+  execFileSync("git", ["init", "-b", "main"], { cwd: fixtureRepository });
+  execFileSync("git", ["config", "user.name", "Release Test"], {
+    cwd: fixtureRepository,
+  });
+  execFileSync("git", ["config", "user.email", "release@example.invalid"], {
+    cwd: fixtureRepository,
+  });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], {
+    cwd: fixtureRepository,
+  });
+  execFileSync("git", ["config", "tag.gpgsign", "false"], {
+    cwd: fixtureRepository,
+  });
+  execFileSync("git", ["add", "."], { cwd: fixtureRepository });
+  execFileSync("git", ["commit", "-m", "chore: add baseline"], {
+    cwd: fixtureRepository,
+    stdio: "ignore",
+  });
+  execFileSync("git", ["tag", "v0.1.0"], { cwd: fixtureRepository });
+  writeFileSync(path.join(fixtureRepository, "product.txt"), "baseline\nfeature\n");
+  execFileSync("git", ["add", "product.txt"], { cwd: fixtureRepository });
+  execFileSync("git", ["commit", "-m", "feat: add product behavior"], {
+    cwd: fixtureRepository,
+    stdio: "ignore",
+  });
+  execFileSync("git", ["init", "--bare", fixtureRemote], { stdio: "ignore" });
+  execFileSync("git", ["remote", "add", "origin", fixtureRemote], {
+    cwd: fixtureRepository,
+  });
+  execFileSync("git", ["push", "--tags", "origin", "main"], {
+    cwd: fixtureRepository,
+    stdio: "ignore",
+  });
+  return { fixtureRemote, fixtureRepository, fixtureRoot };
+}
+
+test("release preparation persists both Android source version fields", (t) => {
+  const fixture = createVersionFixture();
+  t.after(() => rmSync(fixture.fixtureRoot, { recursive: true, force: true }));
+
+  const result = prepareReleaseVersion("0.1.1", "0.1.0", {
+    repositoryRoot: fixture.fixtureRepository,
+  });
+  assert.deepEqual(result, {
+    changed: true,
+    previousVersion: "0.1.0",
+    version: "0.1.1",
+    versionCode: 1001n,
+  });
+  assert.deepEqual(
+    sourceMetadata(readFileSync(
+      path.join(fixture.fixtureRepository, "app", "build.gradle.kts"),
+      "utf8",
+    )),
+    { version: "0.1.1", versionCode: 1001n },
+  );
+  assert.equal(
+    execFileSync("git", ["status", "--porcelain=v1"], {
+      cwd: fixture.fixtureRepository,
+      encoding: "utf8",
+    }),
+    " M app/build.gradle.kts\n",
+  );
+});
+
+test("source version preparation rejects dirty or malformed state", (t) => {
+  const fixture = createVersionFixture();
+  t.after(() => rmSync(fixture.fixtureRoot, { recursive: true, force: true }));
+  writeFileSync(path.join(fixture.fixtureRepository, "untracked.txt"), "unexpected\n");
+  assert.throws(
+    () => prepareReleaseVersion("0.1.1", "0.1.0", {
+      repositoryRoot: fixture.fixtureRepository,
+    }),
+    /requires a clean Git worktree/,
+  );
+  assert.throws(
+    () => sourceMetadata(
+      sourceBuildScript
+        + '\nval tapziqSourceVersionName = "9.9.9"\n',
+    ),
+    /exactly one tapziqSourceVersionName declaration/,
+  );
+  assert.throws(
+    () => sourceMetadata(
+      sourceBuildScript.replace("tapziqSourceVersionCode = 1", "tapziqSourceVersionCode = 2"),
+    ),
+    /requires Android versionCode 1, not 2/,
+  );
+});
+
+test("the real Git prepare plugin commits only source version metadata", async (t) => {
+  const fixture = createVersionFixture();
+  t.after(() => rmSync(fixture.fixtureRoot, { recursive: true, force: true }));
+  const productCommit = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: fixture.fixtureRepository,
+    encoding: "utf8",
+  }).trim();
+  prepareReleaseVersion("0.2.0", "0.1.0", {
+    repositoryRoot: fixture.fixtureRepository,
+  });
+
+  const { prepare } = await import("@semantic-release/git");
+  await prepare(
+    {
+      assets: ["app/build.gradle.kts"],
+      message: "chore(release): ${nextRelease.version} [skip ci]",
+    },
+    {
+      env: process.env,
+      cwd: fixture.fixtureRepository,
+      branch: { name: "main" },
+      options: { repositoryUrl: fixture.fixtureRemote },
+      lastRelease: { version: "0.1.0" },
+      nextRelease: { version: "0.2.0", notes: "Feature notes" },
+      logger: { log() {} },
+    },
+  );
+
+  const releaseCommit = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: fixture.fixtureRepository,
+    encoding: "utf8",
+  }).trim();
+  assert.notEqual(releaseCommit, productCommit);
+  assert.equal(
+    execFileSync("git", ["rev-parse", "HEAD^"], {
+      cwd: fixture.fixtureRepository,
+      encoding: "utf8",
+    }).trim(),
+    productCommit,
+  );
+  assert.equal(
+    execFileSync("git", ["show", "-s", "--format=%s", "HEAD"], {
+      cwd: fixture.fixtureRepository,
+      encoding: "utf8",
+    }).trim(),
+    "chore(release): 0.2.0 [skip ci]",
+  );
+  assert.equal(
+    execFileSync("git", ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"], {
+      cwd: fixture.fixtureRepository,
+      encoding: "utf8",
+    }).trim(),
+    "app/build.gradle.kts",
+  );
+  assert.equal(
+    execFileSync("git", ["--git-dir", fixture.fixtureRemote, "rev-parse", "main"], {
+      encoding: "utf8",
+    }).trim(),
+    releaseCommit,
+  );
+  assert.deepEqual(
+    sourceMetadata(execFileSync(
+      "git",
+      ["show", `${releaseCommit}:app/build.gradle.kts`],
+      { cwd: fixture.fixtureRepository, encoding: "utf8" },
+    )),
+    { version: "0.2.0", versionCode: 2000n },
+  );
+  assert.deepEqual(
+    prepareReleaseVersion("0.2.0", "0.1.0", {
+      repositoryRoot: fixture.fixtureRepository,
+    }),
+    {
+      changed: false,
+      previousVersion: "0.1.0",
+      version: "0.2.0",
+      versionCode: 2000n,
+    },
+  );
 });
 
 test("invalid or unrepresentable semantic versions are rejected", () => {
@@ -384,6 +607,14 @@ test("packaging refuses ignored output symlinks before invoking the build", (t) 
   }
 });
 
+test("packaging refuses a release version that differs from committed source", (t) => {
+  const fixture = createPackageFixture({ sourceVersion: "0.2.0" });
+  t.after(() => rmSync(fixture.fixtureRoot, { recursive: true, force: true }));
+  const result = runPackageFixture(fixture, ["--allow-existing-tag"]);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /Tapziq source is 0\.2\.0 \(2000\), expected 0\.1\.1 \(1001\)/);
+});
+
 test("published verification supports clean reruns and bounded backoff", () => {
   assert.match(
     publishedVerifierScript,
@@ -397,6 +628,18 @@ test("published verification supports clean reruns and bounded backoff", () => {
   assert.match(publishedVerifierScript, /poll_delay_seconds < 30/);
   assert.match(publishedVerifierScript, /poll_delay_seconds=30/);
   assert.doesNotMatch(publishedVerifierScript, /sleep [6-9][0-9]/);
+  assert.match(
+    publishedVerifierScript,
+    /prepare-release-version\.cjs"[\s\S]*?check "\$release_version" "\$expected_source_commit"/,
+  );
+  assert.match(
+    currentReleaseVerifierScript,
+    /expected_commit="\$\(git -C "\$repo_root" rev-parse HEAD\)"/,
+  );
+  assert.match(
+    currentReleaseVerifierScript,
+    /The release commit must directly follow GITHUB_SHA/,
+  );
 });
 
 test("APK verification accepts portable SHA-256 tools and requires unzip", () => {

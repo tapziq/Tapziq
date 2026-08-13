@@ -7,7 +7,7 @@
     "url": "https://github.com/tapziq/Tapziq.git"
   },
   "engines": {
-    "node": ">=24.10.0 <25"
+    "node": ">=24.15.0 <25"
   },
   "scripts": {
     "audit:release": "node scripts/audit-release-tooling.cjs",
@@ -19,6 +19,7 @@
   "devDependencies": {
     "@semantic-release/commit-analyzer": "13.0.1",
     "@semantic-release/exec": "7.1.0",
+    "@semantic-release/git": "11.0.1",
     "@semantic-release/github": "12.0.9",
     "@semantic-release/release-notes-generator": "14.1.1",
     "conventional-changelog-conventionalcommits": "9.3.1",

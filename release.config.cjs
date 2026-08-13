@@ -37,8 +37,18 @@ const releaseConfig = {
       "@semantic-release/exec",
       {
         prepareCmd:
+          "node ./scripts/prepare-release-version.cjs prepare "
+          + "${nextRelease.version} ${lastRelease.version}",
+        publishCmd:
           "./scripts/package-semantic-release.sh "
-          + "${nextRelease.version} ${nextRelease.gitHead}",
+          + "${nextRelease.version} ${nextRelease.gitHead} --allow-existing-tag",
+      },
+    ],
+    [
+      "@semantic-release/git",
+      {
+        assets: ["app/build.gradle.kts"],
+        message: "chore(release): ${nextRelease.version} [skip ci]",
       },
     ],
     [

@@ -33,6 +33,15 @@ automated patch, `v0.1.1`, uses `1001`, and every subsequent stable SemVer
 release remains upgrade-safe. Minor and patch components cannot exceed `999`,
 and the result cannot exceed Android's `2,100,000,000` limit.
 
+For every automated release, the bot updates the checked-in
+`tapziqSourceVersionName` and `tapziqSourceVersionCode` declarations in
+`app/build.gradle.kts`. It commits only that file as
+`chore(release): X.Y.Z [skip ci]`, pushes the commit to `main`, and tags that
+commit. Packaging then rejects any mismatch among those source declarations,
+the requested release version, the APK metadata, and the APK's embedded Git
+revision. The skip marker prevents the generated commit from starting a second
+release workflow.
+
 ## Release assets
 
 Every automated release contains exactly:
@@ -52,14 +61,15 @@ input-method service, opens its test field, and presses a real Tapziq key throug
 the IME. The workflow then downloads the public assets and compares them with
 the files it packaged.
 
-If Semantic Release is interrupted after pushing its tag and stable-channel Git
-note but before completing the GitHub Release, the next run reconciles only that
-exact tag on the unchanged `main` commit. It independently recomputes the SemVer
-level and notes, rebuilds and smoke-tests the APK, validates or creates one
-matching draft, replaces only stale expected assets in that mutable draft,
-uploads the exact fresh asset set, and finishes publication. Ambiguous tags,
-notes, drafts, assets, or source state fail closed; published releases are never
-modified.
+If Semantic Release is interrupted after pushing its generated source-version
+commit, a rerun may advance its checkout from the triggering product commit only
+to that one direct, narrowly scoped release commit. If interruption happens
+after the tag and stable-channel Git note but before the GitHub Release, the run
+independently recomputes the SemVer level and notes, rebuilds and smoke-tests the
+APK, validates or creates one matching draft, replaces only stale expected
+assets in that mutable draft, uploads the exact fresh asset set, and finishes
+publication. Any other branch advance—or ambiguous tags, notes, drafts, assets,
+or source state—fails closed; published releases are never modified.
 
 ## GitHub configuration
 
@@ -81,7 +91,8 @@ upgrades from earlier Tapziq releases.
 The Publish job receives only `contents: write` and `attestations: read`.
 Semantic Release receives the built-in token as `GITHUB_TOKEN`, while
 post-publication `gh` checks receive `GH_TOKEN` in a separate step. Pull requests
-never receive the production secrets.
+never receive the production secrets. Repository rules must continue to permit
+that token to push the narrowly scoped generated release commit to `main`.
 
 Before activating the workflow, a repository administrator must:
 
@@ -113,10 +124,16 @@ npm run test:release
 npm run audit:release
 ```
 
-To package a signed rehearsal for a new, untagged version, set the four
-`TAPZIQ_RELEASE_*` file/credential variables and run:
+To package a signed rehearsal for a new, untagged version, use a temporary clean
+branch. Prepare and commit the same source metadata that the bot would generate,
+then set the four `TAPZIQ_RELEASE_*` file/credential variables and package that
+commit:
 
 ```sh
+git switch -c rehearsal/v0.1.1
+node scripts/prepare-release-version.cjs prepare 0.1.1 0.1.0
+git add app/build.gradle.kts
+git -c commit.gpgsign=false commit -m "chore(release): 0.1.1 [skip ci]"
 export ANDROID_HOME="$HOME/Library/Android/sdk"
 scripts/package-semantic-release.sh 0.1.1 "$(git rev-parse HEAD)"
 ```

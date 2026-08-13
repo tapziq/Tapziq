@@ -47,6 +47,7 @@ fi
 if [[ -n "$(git -C "$repo_root" status --porcelain --untracked-files=normal)" ]]; then
   fail "Production releases must be packaged from a clean Git worktree."
 fi
+node "$script_dir/prepare-release-version.cjs" check "$release_version"
 
 dist_directory="$repo_root/dist"
 release_directory="$dist_directory/release"

@@ -76,11 +76,14 @@ export ANDROID_HOME="$HOME/Library/Android/sdk"
 scripts/package-semantic-release.sh 0.1.1 "$(git rev-parse HEAD)"
 ```
 
-The packaging path disables Gradle's configuration cache so signing passwords
-are not persisted there. It requires a clean Git worktree, runs the unit tests
-and release lint, builds the signed APK, and checks its package, version, source
-commit, signature, signer, permissions, and alignment. The expected production
-signing-certificate fingerprint is tracked in
+The clean commit used for a rehearsal must already declare the same
+`tapziqSourceVersionName` and `tapziqSourceVersionCode` in
+`app/build.gradle.kts`; release-time Gradle properties cannot mask stale source
+metadata. The packaging path disables Gradle's configuration cache so signing
+passwords are not persisted there. It runs the unit tests and release lint,
+builds the signed APK, and checks its package, version, source commit, signature,
+signer, permissions, and alignment. The expected production signing-certificate
+fingerprint is tracked in
 [`release/signing-certificate.sha256`](release/signing-certificate.sha256).
 Verified assets are written to `dist/release/`.
 
@@ -90,7 +93,10 @@ Pushes to `main` are evaluated with Semantic Release. `fix:` and `perf:` commits
 produce patch releases, `feat:` commits produce minor releases, and breaking
 changes produce major releases. A release includes a brand-new production APK,
 checksums, the license, third-party notices, generated notes, and a locked Git
-tag. See [`docs/RELEASING.md`](docs/RELEASING.md) for the complete contract.
+tag. Before tagging, the bot writes the new `versionName` and Android
+`versionCode` into `app/build.gradle.kts` and commits that source metadata. The
+tag, APK, and updated `main` branch all resolve to that generated release commit.
+See [`docs/RELEASING.md`](docs/RELEASING.md) for the complete contract.
 
 ## License
 
