@@ -99,8 +99,30 @@ print(f"{(left + right) // 2} {(top + bottom) // 2}")
 PY
 }
 
-dump_ui
-field_coordinates="$(node_bounds resource-id "$test_field_id")" || \
+field_coordinates=""
+for attempt in 1 2 3 4 5; do
+  dump_ui
+  if field_coordinates="$(node_bounds resource-id "$test_field_id")"; then
+    break
+  fi
+  field_coordinates=""
+
+  # A just-created headless emulator can briefly show this platform ANR while
+  # System UI completes its own cold start. Wait only for that exact system
+  # dialog, then relaunch Tapziq and continue to require the real field/IME.
+  if grep -Fq 'text="System UI isn'"'"'t responding"' "$ui_dump"; then
+    system_wait_coordinates="$(
+      node_bounds resource-id android:id/aerr_wait
+    )" || fail "The System UI wait action could not be resolved."
+    read -r system_wait_x system_wait_y <<< "$system_wait_coordinates"
+    adb shell input tap "$system_wait_x" "$system_wait_y"
+  fi
+
+  sleep 3
+  adb shell am start -W -n "$package_name/.MainActivity" >/dev/null
+  sleep 2
+done
+[[ -n "$field_coordinates" ]] || \
   fail "Could not find Tapziq's test text field."
 read -r field_x field_y <<< "$field_coordinates"
 adb shell input tap "$field_x" "$field_y"

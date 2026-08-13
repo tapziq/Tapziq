@@ -414,6 +414,8 @@ test("production smoke test installs and types through the selected IME", () => 
   assert.match(emulatorSmokeScript, /adb shell ime set/);
   assert.match(emulatorSmokeScript, /mSelectedMethodId=\$ime_component/);
   assert.match(emulatorSmokeScript, /mInputShown=true/);
+  assert.match(emulatorSmokeScript, /System UI isn.*t responding/);
+  assert.match(emulatorSmokeScript, /android:id\/aerr_wait/);
   assert.match(emulatorSmokeScript, /dumpsys window windows/);
   assert.match(emulatorSmokeScript, /adb shell input tap "\$key_x" "\$key_y"/);
   assert.match(emulatorSmokeScript, /typed_text/);
