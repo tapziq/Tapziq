@@ -12,10 +12,11 @@ system input-method connection.
 
 Tapziq requires Android 8.0 or newer.
 
-1. Download `Tapziq-v0.1.0.apk` and `SHA256SUMS` from the
+1. Download all four assets from the
    [latest GitHub release](https://github.com/tapziq/Tapziq/releases/latest).
-2. Verify the APK against `SHA256SUMS`, then allow your browser or file manager
-   to install that APK.
+2. In the download directory, run `sha256sum --check SHA256SUMS` on Linux or
+   `shasum -a 256 --check SHA256SUMS` on macOS. Install the APK only if all
+   three listed files pass verification.
 3. Open **Tapziq Keyboard**, tap **Enable Tapziq Keyboard**, and enable it in
    Android's keyboard settings.
 4. Return to Tapziq, tap **Choose Tapziq Keyboard**, and select it.
@@ -25,8 +26,9 @@ Android intentionally requires the user to enable and select every downloaded
 keyboard. The app cannot bypass those system screens.
 
 If you previously installed Tapziq's development debug APK, uninstall it before
-installing `v0.1.0`. Android cannot update a debug-signed installation with the
-production-signed release, and you will need to enable/select Tapziq again.
+installing the production release. Android cannot update a debug-signed
+installation with the production-signed release, and you will need to
+enable/select Tapziq again.
 
 ## Developer build
 
@@ -67,18 +69,28 @@ TAPZIQ_RELEASE_KEY_ALIAS
 TAPZIQ_RELEASE_KEY_PASSWORD
 ```
 
-With those variables set, run:
+With those variables set, package a new, untagged stable version with:
 
 ```sh
-ANDROID_HOME="$HOME/Library/Android/sdk" scripts/build-production-release.sh
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+scripts/package-semantic-release.sh 0.1.1 "$(git rev-parse HEAD)"
 ```
 
-The script disables Gradle's configuration cache so signing passwords are not
-persisted there. It requires a clean Git worktree, runs the unit tests and release
-lint, builds the signed APK, and checks its package, version, source commit,
-signature, signer, permissions, and alignment. The expected production
+The packaging path disables Gradle's configuration cache so signing passwords
+are not persisted there. It requires a clean Git worktree, runs the unit tests
+and release lint, builds the signed APK, and checks its package, version, source
+commit, signature, signer, permissions, and alignment. The expected production
 signing-certificate fingerprint is tracked in
 [`release/signing-certificate.sha256`](release/signing-certificate.sha256).
+Verified assets are written to `dist/release/`.
+
+## Automatic releases
+
+Pushes to `main` are evaluated with Semantic Release. `fix:` and `perf:` commits
+produce patch releases, `feat:` commits produce minor releases, and breaking
+changes produce major releases. A release includes a brand-new production APK,
+checksums, the license, third-party notices, generated notes, and a locked Git
+tag. See [`docs/RELEASING.md`](docs/RELEASING.md) for the complete contract.
 
 ## License
 

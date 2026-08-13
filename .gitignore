@@ -11,3 +11,5 @@ app/build/
 keystore.properties
 signing.properties
 dist/
+node_modules/
+npm-debug.log*

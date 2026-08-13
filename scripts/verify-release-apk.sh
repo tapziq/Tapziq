@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-  printf 'Usage: %s /path/to/Tapziq.apk EXPECTED_SOURCE_COMMIT\n' "$0" >&2
+if [[ $# -ne 4 ]]; then
+  printf '%s\n' \
+    "Usage: $0 /path/to/Tapziq.apk EXPECTED_SOURCE_COMMIT VERSION VERSION_CODE" >&2
   exit 2
 fi
 
 apk_path="$1"
 expected_source_commit="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+expected_version_name="$3"
+expected_version_code="$4"
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 expected_certificate="$(tr -d '[:space:]' < \
   "$repo_root/release/signing-certificate.sha256")"
@@ -18,6 +21,23 @@ if [[ ! -f "$apk_path" ]]; then
 fi
 if [[ ! "$expected_source_commit" =~ ^[0-9a-f]{40}$ ]]; then
   printf 'Expected source commit must be a full 40-character Git SHA.\n' >&2
+  exit 1
+fi
+if ! command -v unzip >/dev/null 2>&1; then
+  printf 'unzip is required to inspect the APK source metadata.\n' >&2
+  exit 1
+fi
+if ! command -v sha256sum >/dev/null 2>&1 \
+    && ! command -v shasum >/dev/null 2>&1; then
+  printf 'sha256sum or shasum is required to hash the APK.\n' >&2
+  exit 1
+fi
+calculated_version_code="$(
+  "$repo_root/scripts/semantic-version-code.sh" "$expected_version_name"
+)"
+if [[ "$expected_version_code" != "$calculated_version_code" ]]; then
+  printf 'VERSION_CODE must be %s for version %s.\n' \
+    "$calculated_version_code" "$expected_version_name" >&2
   exit 1
 fi
 
@@ -47,7 +67,7 @@ grep -Fq 'Verified using v3 scheme (APK Signature Scheme v3): true' \
   <<< "$signature_report"
 grep -Fq 'Verified using v1 scheme (JAR signing): false' \
   <<< "$signature_report"
-grep -Fq 'Number of signers: 1' <<< "$signature_report"
+grep -Fxq 'Number of signers: 1' <<< "$signature_report"
 if grep -Fqi 'Android Debug' <<< "$signature_report"; then
   printf 'Release APK uses an Android debug certificate.\n' >&2
   exit 1
@@ -64,8 +84,8 @@ fi
 badging="$($aapt2 dump badging "$apk_path")"
 package_line="$(grep -m1 '^package:' <<< "$badging")"
 if [[ "$package_line" != *"name='com.tapziq.keyboard'"* \
-    || "$package_line" != *"versionCode='1'"* \
-    || "$package_line" != *"versionName='0.1.0'"* ]]; then
+    || "$package_line" != *"versionCode='$expected_version_code'"* \
+    || "$package_line" != *"versionName='$expected_version_name'"* ]]; then
   printf 'Unexpected package metadata: %s\n' "$package_line" >&2
   exit 1
 fi
@@ -90,9 +110,14 @@ if [[ "$embedded_source_commit" != "$expected_source_commit" ]]; then
 fi
 
 "$zipalign" -c -P 16 4 "$apk_path"
-apk_sha256="$(shasum -a 256 "$apk_path" | awk '{ print $1 }')"
+if command -v sha256sum >/dev/null 2>&1; then
+  apk_sha256="$(sha256sum "$apk_path" | awk '{ print $1 }')"
+else
+  apk_sha256="$(shasum -a 256 "$apk_path" | awk '{ print $1 }')"
+fi
 
-printf 'Verified package: com.tapziq.keyboard 0.1.0 (1)\n'
+printf 'Verified package: com.tapziq.keyboard %s (%s)\n' \
+  "$expected_version_name" "$expected_version_code"
 printf 'Verified source commit: %s\n' "$embedded_source_commit"
 printf 'Verified certificate SHA-256: %s\n' "$actual_certificate"
 printf 'Verified APK SHA-256: %s\n' "$apk_sha256"

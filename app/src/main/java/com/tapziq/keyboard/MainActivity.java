@@ -92,6 +92,7 @@ public final class MainActivity extends Activity {
 
         content.addView(sectionTitle(getString(R.string.try_title)));
         EditText testField = new EditText(this);
+        testField.setId(R.id.test_field);
         testField.setHint(R.string.try_hint);
         testField.setTextColor(getColor(R.color.primary_text));
         testField.setHintTextColor(getColor(R.color.secondary_text));

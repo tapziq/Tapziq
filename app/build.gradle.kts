@@ -2,6 +2,14 @@ plugins {
     id("com.android.application")
 }
 
+val tapziqVersionNameProperty = providers.gradleProperty("tapziqVersionName")
+val tapziqVersionCodeProperty = providers.gradleProperty("tapziqVersionCode")
+val configuredVersionName = tapziqVersionNameProperty.orElse("0.1.0")
+val configuredVersionCode = tapziqVersionCodeProperty.map { rawVersionCode ->
+    rawVersionCode.toIntOrNull()
+        ?: throw GradleException("tapziqVersionCode must be a positive integer.")
+}.orElse(1)
+
 val releaseSigningVariables = mapOf(
     "TAPZIQ_RELEASE_STORE_FILE" to providers.environmentVariable("TAPZIQ_RELEASE_STORE_FILE"),
     "TAPZIQ_RELEASE_STORE_PASSWORD" to providers.environmentVariable("TAPZIQ_RELEASE_STORE_PASSWORD"),
@@ -20,8 +28,8 @@ android {
         applicationId = "com.tapziq.keyboard"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = configuredVersionCode.get()
+        versionName = configuredVersionName.get()
 
         testInstrumentationRunner = "android.app.Instrumentation"
     }
@@ -72,7 +80,7 @@ dependencies {
 
 val verifyReleaseSigning by tasks.registering {
     group = "verification"
-    description = "Fails production packaging unless every release signing input is valid."
+    description = "Fails production packaging unless its version and signing inputs are valid."
 
     doLast {
         val missing = releaseSigningVariables.filterValues {
@@ -89,6 +97,48 @@ val verifyReleaseSigning by tasks.registering {
         ).get())
         if (!keystore.isFile) {
             throw GradleException("Production keystore does not exist: $keystore")
+        }
+
+        val versionName = tapziqVersionNameProperty.orNull
+        val versionCodeText = tapziqVersionCodeProperty.orNull
+        if (versionName.isNullOrBlank() || versionCodeText.isNullOrBlank()) {
+            throw GradleException(
+                "Production releases require -PtapziqVersionName and " +
+                    "-PtapziqVersionCode."
+            )
+        }
+
+        val versionMatch = Regex(
+            "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+        ).matchEntire(versionName)
+            ?: throw GradleException(
+                "tapziqVersionName must be a stable semantic version such as 1.2.3."
+            )
+        if (!Regex("^[1-9][0-9]*$").matches(versionCodeText)) {
+            throw GradleException("tapziqVersionCode must be a positive integer.")
+        }
+
+        val major = versionMatch.groupValues[1].toLongOrNull()
+            ?: throw GradleException("The semantic-version major component is too large.")
+        val minor = versionMatch.groupValues[2].toLongOrNull()
+            ?: throw GradleException("The semantic-version minor component is too large.")
+        val patch = versionMatch.groupValues[3].toLongOrNull()
+            ?: throw GradleException("The semantic-version patch component is too large.")
+        if (major > 2100 || minor > 999 || patch > 999) {
+            throw GradleException(
+                "Semantic-version components exceed the Android versionCode limits."
+            )
+        }
+        val expectedVersionCode = major * 1_000_000L + minor * 1_000L + patch
+        if (expectedVersionCode !in 1L..2_100_000_000L) {
+            throw GradleException(
+                "The semantic version cannot be represented by an Android versionCode."
+            )
+        }
+        if (versionCodeText.toLongOrNull() != expectedVersionCode) {
+            throw GradleException(
+                "tapziqVersionCode must be $expectedVersionCode for version $versionName."
+            )
         }
     }
 }
