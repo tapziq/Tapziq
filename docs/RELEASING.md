@@ -47,9 +47,10 @@ checks the application ID, version name/code, minimum and target SDKs,
 non-debuggable state, absence of permissions, zip alignment, one production
 signer, v2/v3 signatures, permanent certificate fingerprint, and embedded Git
 source commit. Before publication, the workflow installs that exact signed APK
-on an Android 16 emulator, discovers/enables/selects its input-method service,
-opens its test field, and presses a real Tapziq key through the IME. The workflow
-then downloads the public assets and compares them with the files it packaged.
+on an Android 16 automated test device, discovers/enables/selects its
+input-method service, opens its test field, and presses a real Tapziq key through
+the IME. The workflow then downloads the public assets and compares them with
+the files it packaged.
 
 If Semantic Release is interrupted after pushing its tag and stable-channel Git
 note but before completing the GitHub Release, the next run reconciles only that
