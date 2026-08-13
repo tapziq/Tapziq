@@ -273,9 +273,11 @@ test("an orphan tag is rejected when its version is not analyzer-derived", () =>
   const fixture = createFixture({ releaseCommit: true, withTag: true });
   try {
     git(fixture.work, "tag", "-d", "v0.2.0");
+    git(fixture.work, "update-ref", "-d", "refs/notes/semantic-release-v0.2.0");
     git(fixture.work, "tag", "v0.3.0");
     git(fixture.work, "notes", "--ref", "semantic-release-v0.3.0", "add", "-m", '{"channels":[null]}', "v0.3.0");
     git(fixture.work, "push", fixture.remote, ":refs/tags/v0.2.0", "refs/tags/v0.3.0");
+    git(fixture.work, "push", fixture.remote, ":refs/notes/semantic-release-v0.2.0");
     git(fixture.work, "push", fixture.remote, "refs/notes/semantic-release-v0.3.0");
     const result = runHelper(fixture);
     assert.equal(result.status, 1);
@@ -293,6 +295,43 @@ test("an orphan tag without the exact semantic-release note is rejected", () => 
     const result = runHelper(fixture);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Remote semantic-release note is missing/);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("an orphan release is rejected after main advances past its tag", () => {
+  const fixture = createFixture({ releaseCommit: true, withTag: true });
+  try {
+    writeFileSync(path.join(fixture.work, "fixture.txt"), "baseline\nfeature\nfollow-up\n");
+    git(fixture.work, "add", "fixture.txt");
+    git(fixture.work, "commit", "-m", "ci: advance main after interrupted release");
+    git(fixture.work, "push", "origin", "main");
+    fixture.head = git(fixture.work, "rev-parse", "HEAD");
+
+    const result = runHelper(fixture);
+    assert.equal(result.status, 1);
+    assert.match(
+      result.stderr,
+      /newer reachable semantic-release tag or note.*not exactly on GITHUB_SHA: v0\.2\.0/s,
+    );
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("a future semantic-release note without its tag fails closed", () => {
+  const fixture = createFixture({ releaseCommit: true, withTag: true });
+  try {
+    git(fixture.work, "tag", "-d", "v0.2.0");
+    git(fixture.work, "push", fixture.remote, ":refs/tags/v0.2.0");
+
+    const result = runHelper(fixture);
+    assert.equal(result.status, 1);
+    assert.match(
+      result.stderr,
+      /Semantic-release note v0\.2\.0 has no matching local tag.*ambiguous/s,
+    );
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

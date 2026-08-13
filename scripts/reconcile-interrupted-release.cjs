@@ -142,6 +142,49 @@ function resolveRemoteTag(tag) {
   return refs.get(peeledRef) || refs.get(directRef);
 }
 
+function remoteSemanticReleaseNoteTags() {
+  const output = git("ls-remote", repositoryUrl, "refs/notes/semantic-release-v*");
+  if (output === "") {
+    return [];
+  }
+
+  const tags = new Set();
+  for (const row of output.split("\n")) {
+    const [sha, ref, extra] = row.split(/\s+/);
+    const match = /^refs\/notes\/semantic-release-(v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))$/
+      .exec(ref);
+    if (extra !== undefined || !/^[0-9a-f]{40}$/.test(sha)) {
+      fail("A remote semantic-release note reference is malformed.");
+    }
+    if (match === null) {
+      fail(`Remote semantic-release note reference is malformed: ${ref}.`);
+    }
+    if (tags.has(match[1])) {
+      fail(`Multiple semantic-release note references use ${match[1]}.`);
+    }
+    tags.add(match[1]);
+  }
+  return [...tags];
+}
+
+function localTagExists(tag) {
+  const result = spawnSync(
+    "git",
+    ["show-ref", "--verify", "--quiet", `refs/tags/${tag}`],
+    { cwd: repositoryRoot, stdio: "ignore" },
+  );
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status === 0) {
+    return true;
+  }
+  if (result.status === 1) {
+    return false;
+  }
+  fail(`Could not inspect local release tag ${tag}.`);
+}
+
 function parseSemanticReleaseNote(tag) {
   const noteRef = `refs/notes/semantic-release-${tag}`;
   const remoteNoteRef = git("ls-remote", repositoryUrl, noteRef);
@@ -465,9 +508,57 @@ async function main() {
     fail("Remote main no longer matches the release source commit.");
   }
 
+  const latestPublished = ghApi(
+    `repositories/${TRUSTED_REPOSITORY_ID}/releases/latest`,
+  );
+  if (!latestPublished || !TAG_PATTERN.test(latestPublished.tag_name)) {
+    fail("Could not resolve GitHub's latest stable Tapziq release.");
+  }
+  if (latestPublished.tag_name !== "v0.1.0" && latestPublished.immutable !== true) {
+    fail("GitHub's latest automated Tapziq release is not immutable.");
+  }
+
+  const mergedReleaseTags = git("tag", "--merged", expectedCommit)
+    .split("\n")
+    .filter((tag) => TAG_PATTERN.test(tag));
+  const latestPublishedVersion = latestPublished.tag_name.slice(1);
+  const recoveryTags = new Set(mergedReleaseTags.filter(
+    (tag) => semver.gt(tag.slice(1), latestPublishedVersion),
+  ));
+  for (const noteTag of remoteSemanticReleaseNoteTags()) {
+    if (!semver.gt(noteTag.slice(1), latestPublishedVersion)) {
+      continue;
+    }
+    if (!localTagExists(noteTag)) {
+      fail(
+        `Semantic-release note ${noteTag} has no matching local tag; `
+          + "release recovery state is ambiguous.",
+      );
+    }
+    if (mergedReleaseTags.includes(noteTag)) {
+      recoveryTags.add(noteTag);
+    }
+  }
+
   const releaseTags = git("tag", "--points-at", expectedCommit)
     .split("\n")
     .filter((tag) => TAG_PATTERN.test(tag));
+  const orderedRecoveryTags = [...recoveryTags]
+    .sort((first, second) => semver.compare(first.slice(1), second.slice(1)));
+  if (
+    orderedRecoveryTags.length > 0
+    && (
+      orderedRecoveryTags.length !== 1
+      || releaseTags.length !== 1
+      || orderedRecoveryTags[0] !== releaseTags[0]
+    )
+  ) {
+    fail(
+      "A newer reachable semantic-release tag or note lacks a matching latest "
+        + "immutable GitHub Release and is not exactly on GITHUB_SHA: "
+        + orderedRecoveryTags.join(", "),
+    );
+  }
   if (releaseTags.length === 0) {
     setHandled(false);
     return;
@@ -483,9 +574,6 @@ async function main() {
   }
   parseSemanticReleaseNote(currentTag);
 
-  const mergedReleaseTags = git("tag", "--merged", expectedCommit)
-    .split("\n")
-    .filter((tag) => TAG_PATTERN.test(tag));
   const currentOrNewerTags = mergedReleaseTags.filter(
     (tag) => !semver.lt(tag.slice(1), version),
   );
@@ -527,12 +615,6 @@ async function main() {
     return;
   }
 
-  const latestPublished = ghApi(
-    `repositories/${TRUSTED_REPOSITORY_ID}/releases/latest`,
-  );
-  if (!latestPublished || !TAG_PATTERN.test(latestPublished.tag_name)) {
-    fail("Could not resolve GitHub's latest stable Tapziq release.");
-  }
   if (latestPublished.tag_name !== previousTag) {
     fail("The previous semantic-version tag is not GitHub's latest stable release.");
   }
