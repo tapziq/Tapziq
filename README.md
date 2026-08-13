@@ -1,12 +1,36 @@
 # Tapziq Keyboard
 
-Tapziq is a deliberately small Android keyboard. It provides a QWERTY layout,
-one-shot shift, numbers, symbols, backspace, space, context-aware enter actions,
-and Android's keyboard switch key.
+Tapziq is an Android keyboard with a QWERTY layout, one-shot shift, numbers,
+symbols, context-aware enter actions, Android's keyboard switch key, and
+user-initiated proofreading powered on-device by Gemini Nano.
 
-The app has no internet permission, analytics, ads, clipboard access, or typing
-history. All key presses go straight to Android's active text field through the
-system input-method connection.
+Ordinary key presses go straight to Android's active text field. Tapziq has no
+ads, clipboard access, typing history, or Tapziq-owned analytics. Text submitted
+for proofreading is processed locally through Android AICore and is not saved.
+The Google ML Kit SDK can use network access for model/configuration updates and
+sends Google non-content diagnostics and usage metrics. See the full
+[privacy notice](PRIVACY.md).
+
+## Proofread with Gemini Nano
+
+In an ordinary text field, select a passage or leave the cursor in a short field,
+then tap **Proofread with Gemini Nano**. Tapziq opens a brief foreground screen
+while AICore checks spelling and grammar, returns to the editor, and displays the
+best suggestion above the keyboard. Nothing changes until you tap **Apply**.
+
+Proofreading currently uses English keyboard input and accepts up to 500
+characters from active fields up to 2,000 characters long. It is disabled for
+password, email-address, no-suggestions, and
+non-text fields. It requires a supported device, compatible AICore, a locked
+bootloader, and a user age of 18 or older. The first request may download model
+assets. Unsupported devices keep the core keyboard fully usable and show a
+clear unavailable message.
+
+Tapziq does not hard-code a manufacturer or model. It asks AICore whether the
+Proofreading feature is available at runtime, so the same APK works across
+Google's current [supported-device list](https://developers.google.com/ml-kit/genai)
+and fails closed elsewhere. The complete cross-app flow has been physically
+verified on a locked US Galaxy S25 Ultra (SM-S938U) running Android 16.
 
 ## Install
 
@@ -80,10 +104,12 @@ The clean commit used for a rehearsal must already declare the same
 `tapziqSourceVersionName` and `tapziqSourceVersionCode` in
 `app/build.gradle.kts`; release-time Gradle properties cannot mask stale source
 metadata. The packaging path disables Gradle's configuration cache so signing
-passwords are not persisted there. It runs the unit tests and release lint,
-builds the signed APK, and checks its package, version, source commit, signature,
-signer, permissions, and alignment. The expected production signing-certificate
-fingerprint is tracked in
+metadata. The packaging path disables Gradle's configuration cache so signing
+passwords are not persisted there. It requires a clean Git worktree, runs the
+unit tests and release lint, builds the signed APK, and checks its package,
+version, source commit, signature, signer, exact permission allowlist, and
+alignment. The expected production signing-certificate fingerprint is tracked
+in
 [`release/signing-certificate.sha256`](release/signing-certificate.sha256).
 Verified assets are written to `dist/release/`.
 

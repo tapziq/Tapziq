@@ -650,6 +650,21 @@ test("APK verification accepts portable SHA-256 tools and requires unzip", () =>
   assert.match(apkVerifierScript, /apk_sha256="\$\(shasum -a 256/);
 });
 
+test("APK verification enforces the complete Gemini Nano permission contract", () => {
+  assert.match(apkVerifierScript, /android\.permission\.ACCESS_NETWORK_STATE/);
+  assert.match(apkVerifierScript, /android\.permission\.INTERNET/);
+  assert.match(
+    apkVerifierScript,
+    /com\.google\.android\.apps\.aicore\.service\.BIND_SERVICE/,
+  );
+  assert.match(
+    apkVerifierScript,
+    /com\.tapziq\.keyboard\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION/,
+  );
+  assert.match(apkVerifierScript, /actual_permissions/);
+  assert.match(apkVerifierScript, /expected_permissions/);
+});
+
 test("production smoke test installs and types through the selected IME", () => {
   assert.match(emulatorSmokeScript, /adb uninstall "\$package_name"/);
   assert.match(emulatorSmokeScript, /adb install --no-streaming/);
@@ -661,6 +676,7 @@ test("production smoke test installs and types through the selected IME", () => 
   assert.match(emulatorSmokeScript, /android:id\/aerr_wait/);
   assert.match(emulatorSmokeScript, /dumpsys window windows/);
   assert.match(emulatorSmokeScript, /adb shell input tap "\$key_x" "\$key_y"/);
+  assert.match(emulatorSmokeScript, /proofread_rows_before_letters=1/);
   assert.match(emulatorSmokeScript, /typed_text/);
 });
 

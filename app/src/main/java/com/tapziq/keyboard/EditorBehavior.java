@@ -1,5 +1,6 @@
 package com.tapziq.keyboard;
 
+import android.os.Build;
 import android.text.InputType;
 import android.view.inputmethod.EditorInfo;
 
@@ -39,6 +40,36 @@ final class EditorBehavior {
     static boolean isMultiline(int inputType) {
         return (inputType & InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_TEXT
                 && (inputType & InputType.TYPE_TEXT_FLAG_MULTI_LINE) != 0;
+    }
+
+    static boolean supportsProofreading(EditorInfo info) {
+        if (info == null
+                || (info.imeOptions & EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
+                || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA
+                        && !info.isWritingToolsEnabled())) {
+            return false;
+        }
+        return supportsProofreadingInputType(info.inputType);
+    }
+
+    static boolean supportsProofreadingInputType(int inputType) {
+        if ((inputType & InputType.TYPE_MASK_CLASS) != InputType.TYPE_CLASS_TEXT) {
+            return false;
+        }
+        if ((inputType & InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS) != 0) {
+            return false;
+        }
+        int variation = inputType & InputType.TYPE_MASK_VARIATION;
+        switch (variation) {
+            case InputType.TYPE_TEXT_VARIATION_NORMAL:
+            case InputType.TYPE_TEXT_VARIATION_SHORT_MESSAGE:
+            case InputType.TYPE_TEXT_VARIATION_LONG_MESSAGE:
+            case InputType.TYPE_TEXT_VARIATION_EMAIL_SUBJECT:
+            case InputType.TYPE_TEXT_VARIATION_WEB_EDIT_TEXT:
+                return true;
+            default:
+                return false;
+        }
     }
 
     static String enterLabel(int imeOptions) {

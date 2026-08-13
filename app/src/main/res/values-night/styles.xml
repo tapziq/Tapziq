@@ -9,4 +9,9 @@
         <item name="android:statusBarColor">@color/screen_background</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
+
+    <style name="Theme.Tapziq.Proofread" parent="Theme.Tapziq">
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowDisablePreview">true</item>
+    </style>
 </resources>

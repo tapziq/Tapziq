@@ -16,7 +16,8 @@ public final class KeyboardLayoutsTest {
                 KeyboardLayouts.Mode.LETTERS,
                 false,
                 true,
-                "↵"
+                "↵",
+                true
         ));
 
         for (char letter = 'a'; letter <= 'z'; letter++) {
@@ -30,7 +31,8 @@ public final class KeyboardLayoutsTest {
                 KeyboardLayouts.Mode.LETTERS,
                 true,
                 false,
-                "Done"
+                "Done",
+                true
         ));
 
         assertTrue(typed.contains("A"));
@@ -44,13 +46,15 @@ public final class KeyboardLayoutsTest {
                 KeyboardLayouts.Mode.NUMBERS,
                 false,
                 false,
-                "↵"
+                "↵",
+                true
         );
         List<List<KeyboardLayouts.KeySpec>> symbols = KeyboardLayouts.rows(
                 KeyboardLayouts.Mode.SYMBOLS,
                 false,
                 false,
-                "↵"
+                "↵",
+                true
         );
 
         assertTrue(hasAction(numbers, KeyboardLayouts.Action.SYMBOLS));
@@ -66,17 +70,48 @@ public final class KeyboardLayoutsTest {
                 KeyboardLayouts.Mode.LETTERS,
                 false,
                 true,
-                "↵"
+                "↵",
+                true
         );
         List<List<KeyboardLayouts.KeySpec>> withoutSwitch = KeyboardLayouts.rows(
                 KeyboardLayouts.Mode.LETTERS,
                 false,
                 false,
-                "↵"
+                "↵",
+                true
         );
 
         assertTrue(hasAction(withSwitch, KeyboardLayouts.Action.NEXT_IME));
         assertTrue(!hasAction(withoutSwitch, KeyboardLayouts.Action.NEXT_IME));
+    }
+
+    @Test
+    public void proofreadActionAppearsOnlyOnLetterLayout() {
+        List<List<KeyboardLayouts.KeySpec>> letters = KeyboardLayouts.rows(
+                KeyboardLayouts.Mode.LETTERS,
+                false,
+                false,
+                "↵",
+                true
+        );
+        List<List<KeyboardLayouts.KeySpec>> numbers = KeyboardLayouts.rows(
+                KeyboardLayouts.Mode.NUMBERS,
+                false,
+                false,
+                "↵",
+                true
+        );
+        List<List<KeyboardLayouts.KeySpec>> privateLetters = KeyboardLayouts.rows(
+                KeyboardLayouts.Mode.LETTERS,
+                false,
+                false,
+                "↵",
+                false
+        );
+
+        assertTrue(hasAction(letters, KeyboardLayouts.Action.PROOFREAD));
+        assertTrue(!hasAction(numbers, KeyboardLayouts.Action.PROOFREAD));
+        assertTrue(!hasAction(privateLetters, KeyboardLayouts.Action.PROOFREAD));
     }
 
     private static Set<String> outputs(List<List<KeyboardLayouts.KeySpec>> rows) {

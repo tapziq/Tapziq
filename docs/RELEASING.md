@@ -53,13 +53,18 @@ Every automated release contains exactly:
 
 The APK is built once and frozen before checksums are generated. Verification
 checks the application ID, version name/code, minimum and target SDKs,
-non-debuggable state, absence of permissions, zip alignment, one production
-signer, v2/v3 signatures, permanent certificate fingerprint, and embedded Git
+non-debuggable state, the exact audited permission allowlist, zip alignment,
+one production signer, v2/v3 signatures, permanent certificate fingerprint, and embedded Git
 source commit. Before publication, the workflow installs that exact signed APK
 on an Android 16 automated test device, discovers/enables/selects its
 input-method service, opens its test field, and presses a real Tapziq key through
 the IME. The workflow then downloads the public assets and compares them with
 the files it packaged.
+
+The automated test device does not provide a supported Gemini Nano/AICore
+configuration, so that smoke test covers the core IME but not proofreading.
+Proofreading releases additionally require a supported, locked physical device
+check from an editor owned by a different app.
 
 If Semantic Release is interrupted after pushing its generated source-version
 commit, a rerun may advance its checkout from the triggering product commit only

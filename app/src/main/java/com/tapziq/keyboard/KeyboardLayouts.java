@@ -21,6 +21,7 @@ final class KeyboardLayouts {
         LETTERS,
         NUMBERS,
         SYMBOLS,
+        PROOFREAD,
         NEXT_IME,
         SPACER
     }
@@ -50,7 +51,8 @@ final class KeyboardLayouts {
             Mode mode,
             boolean shifted,
             boolean offerImeSwitch,
-            String enterLabel
+            String enterLabel,
+            boolean offerProofread
     ) {
         switch (mode) {
             case NUMBERS:
@@ -59,16 +61,20 @@ final class KeyboardLayouts {
                 return symbolRows(offerImeSwitch, enterLabel);
             case LETTERS:
             default:
-                return letterRows(shifted, offerImeSwitch, enterLabel);
+                return letterRows(shifted, offerImeSwitch, enterLabel, offerProofread);
         }
     }
 
     private static List<List<KeySpec>> letterRows(
             boolean shifted,
             boolean offerImeSwitch,
-            String enterLabel
+            String enterLabel,
+            boolean offerProofread
     ) {
         List<List<KeySpec>> rows = new ArrayList<>();
+        if (offerProofread) {
+            rows.add(proofreadRow());
+        }
         rows.add(textRow("qwertyuiop", shifted));
 
         List<KeySpec> middle = new ArrayList<>();
@@ -132,6 +138,12 @@ final class KeyboardLayouts {
         row.add(new KeySpec("space", " ", Action.SPACE, 3.8f));
         row.add(text(".", ".", 0.85f));
         row.add(action(enterLabel, Action.ENTER, 1.55f));
+        return row;
+    }
+
+    private static List<KeySpec> proofreadRow() {
+        List<KeySpec> row = new ArrayList<>();
+        row.add(action("Proofread with Gemini Nano", Action.PROOFREAD, 1f));
         return row;
     }
 

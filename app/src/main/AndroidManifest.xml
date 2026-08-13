@@ -22,6 +22,16 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ProofreadActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:finishOnTaskLaunch="true"
+            android:noHistory="true"
+            android:taskAffinity="com.tapziq.keyboard.proofread"
+            android:theme="@style/Theme.Tapziq.Proofread"
+            android:windowSoftInputMode="stateAlwaysHidden" />
+
         <service
             android:name=".TapziqInputMethodService"
             android:exported="true"
