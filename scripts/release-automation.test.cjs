@@ -462,11 +462,9 @@ test("workflow keeps secrets out of PR verification and uses safe token scopes",
   );
   assert.match(productionPublisherScript, /grep -Ec '\^handled=\(true\|false\)\$'/);
   assert.match(productionPublisherScript, /npm run release/);
-  assert.match(
-    workflow,
-    /Enable KVM for the Android emulator[\s\S]*99-kvm4all\.rules[\s\S]*udevadm trigger --name-match=kvm[\s\S]*test -r \/dev\/kvm[\s\S]*test -w \/dev\/kvm/,
-  );
-  assert.match(publishStep[0], /disable-linux-hw-accel: false/);
+  assert.match(workflow, /\n  release:[\s\S]*?\n    runs-on: macos-15-intel/);
+  assert.doesNotMatch(workflow, /99-kvm4all|disable-linux-hw-accel/);
+  assert.match(publishStep[0], /arch: x86_64/);
   assert.match(publishStep[0], /emulator-boot-timeout: 600/);
   assert.match(publishStep[0], /emulator-options: .* -no-metrics/);
   assert.match(
