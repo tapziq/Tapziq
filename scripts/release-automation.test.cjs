@@ -451,6 +451,13 @@ test("workflow keeps secrets out of PR verification and uses safe token scopes",
   assert.match(publishStep[0], /node scripts\/reconcile-interrupted-release\.cjs/);
   assert.match(publishStep[0], /npm run release/);
   assert.match(
+    workflow,
+    /Enable KVM for the Android emulator[\s\S]*99-kvm4all\.rules[\s\S]*udevadm trigger --name-match=kvm[\s\S]*test -r \/dev\/kvm[\s\S]*test -w \/dev\/kvm/,
+  );
+  assert.match(publishStep[0], /disable-linux-hw-accel: false/);
+  assert.match(publishStep[0], /emulator-boot-timeout: 600/);
+  assert.match(publishStep[0], /emulator-options: .* -no-metrics/);
+  assert.match(
     publishStep[0],
     /ReactiveCircus\/android-emulator-runner@[0-9a-f]{40}/,
   );
