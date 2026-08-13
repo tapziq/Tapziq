@@ -42,6 +42,10 @@ const emulatorSmokeScript = readFileSync(
   path.join(repositoryRoot, "scripts", "smoke-test-release-apk.sh"),
   "utf8",
 );
+const productionPublisherScript = readFileSync(
+  path.join(repositoryRoot, "scripts", "publish-production-release.sh"),
+  "utf8",
+);
 
 function writeExecutable(filePath, contents) {
   writeFileSync(filePath, contents, "utf8");
@@ -448,8 +452,14 @@ test("workflow keeps secrets out of PR verification and uses safe token scopes",
     /\n          GH_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/,
   );
   assert.match(publishStep[0], /TAPZIQ_RUN_EMULATOR_SMOKE: "1"/);
-  assert.match(publishStep[0], /node scripts\/reconcile-interrupted-release\.cjs/);
-  assert.match(publishStep[0], /npm run release/);
+  assert.match(publishStep[0], /script: scripts\/publish-production-release\.sh/);
+  assert.match(productionPublisherScript, /^#!\/usr\/bin\/env bash\nset -euo pipefail/);
+  assert.match(
+    productionPublisherScript,
+    /node scripts\/reconcile-interrupted-release\.cjs \| tee/,
+  );
+  assert.match(productionPublisherScript, /grep -Ec '\^handled=\(true\|false\)\$'/);
+  assert.match(productionPublisherScript, /npm run release/);
   assert.match(
     workflow,
     /Enable KVM for the Android emulator[\s\S]*99-kvm4all\.rules[\s\S]*udevadm trigger --name-match=kvm[\s\S]*test -r \/dev\/kvm[\s\S]*test -w \/dev\/kvm/,

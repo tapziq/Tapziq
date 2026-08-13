@@ -136,19 +136,7 @@ jobs:
           disable-spellchecker: true
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -no-metrics
-          script: |
-            set -euo pipefail
-            reconciliation_log="${RUNNER_TEMP}/tapziq-reconciliation.txt"
-            node scripts/reconcile-interrupted-release.cjs | tee "$reconciliation_log"
-            if [[ "$(grep -Ec '^handled=(true|false)$' "$reconciliation_log")" != 1 ]]; then
-              printf 'ERROR: Reconciliation returned an ambiguous result.\n' >&2
-              exit 1
-            fi
-            if grep -Fxq 'handled=false' "$reconciliation_log"; then
-              npm run release
-            else
-              printf 'The interrupted or completed release was reconciled.\n'
-            fi
+          script: scripts/publish-production-release.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
