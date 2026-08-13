@@ -465,7 +465,7 @@ test("workflow keeps secrets out of PR verification and uses safe token scopes",
   assert.match(workflow, /\n  release:[\s\S]*?\n    runs-on: macos-15-intel/);
   assert.doesNotMatch(workflow, /99-kvm4all|disable-linux-hw-accel/);
   assert.match(publishStep[0], /arch: x86_64/);
-  assert.match(publishStep[0], /emulator-boot-timeout: 600/);
+  assert.match(publishStep[0], /emulator-boot-timeout: 900/);
   assert.match(publishStep[0], /emulator-options: .* -no-metrics/);
   assert.match(
     publishStep[0],
