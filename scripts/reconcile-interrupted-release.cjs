@@ -93,20 +93,25 @@ function releaseApiOrNull(endpoint) {
   }
 }
 
-function ghApiWithBinaryInput(endpoint, fields, content) {
-  const result = spawnSync("gh", ["api", endpoint, ...fields], {
+function ghApiWithFileInput(endpoint, fields, localPath) {
+  const result = spawnSync("gh", ["api", endpoint, ...fields, "--input", localPath], {
     cwd: repositoryRoot,
-    input: content,
+    encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.error) {
     throw result.error;
   }
   if (result.status !== 0) {
-    const error = new Error("GitHub asset upload failed.");
+    const stderr = result.stderr.trim();
+    const error = new Error(
+      stderr === ""
+        ? "GitHub asset upload failed."
+        : `GitHub asset upload failed: ${stderr}`,
+    );
     error.status = result.status;
-    error.stderr = result.stderr.toString("utf8");
+    error.stderr = stderr;
     throw error;
   }
 }
@@ -664,15 +669,14 @@ function uploadAssets(draft, version) {
     if (matchingAssets.has(asset.name)) {
       continue;
     }
-    const content = readFileSync(path.join(releaseDirectory, asset.name));
-    ghApiWithBinaryInput(
+    const localPath = path.join(releaseDirectory, asset.name);
+    ghApiWithFileInput(
       `${uploadUrl.href}?name=${encodeURIComponent(asset.name)}&label=${encodeURIComponent(asset.label)}`,
       [
         "--method", "POST",
         "-H", `Content-Type: ${asset.contentType}`,
-        "--input", "-",
       ],
-      content,
+      localPath,
     );
   }
   const refreshed = ghApi(`repositories/${TRUSTED_REPOSITORY_ID}/releases/${draft.id}`);
