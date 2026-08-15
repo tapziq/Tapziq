@@ -211,6 +211,7 @@ exit 97
   writeFileSync(gh, `#!/usr/bin/env node
 const { createHash } = require("node:crypto");
 const { existsSync, readFileSync, writeFileSync } = require("node:fs");
+const path = require("node:path");
 const args = process.argv.slice(2);
 if (args[0] !== "api") process.exit(70);
 const endpoint = args[1];
@@ -282,11 +283,27 @@ if (endpoint === "repositories/${trustedRepositoryId}") {
   process.stdout.write(JSON.stringify(releaseJson(state)));
 } else if (endpoint.startsWith("https://uploads.github.com/") && method === "POST") {
   if (!state || state.published) process.exit(73);
-  const failAfter = Number(process.env.TAPZIQ_TEST_FAIL_UPLOAD_AFTER);
-  if (Number.isSafeInteger(failAfter) && state.assets.length >= failAfter) process.exit(77);
   const upload = new URL(endpoint);
   if (upload.pathname !== "/repos/${trustedRepository}/releases/42/assets") process.exit(74);
-  const content = readFileSync(0);
+  const inputIndex = args.indexOf("--input");
+  if (inputIndex === -1 || !args[inputIndex + 1] || args[inputIndex + 1] === "-") {
+    process.stderr.write("release assets must be uploaded from a file\\n");
+    process.exit(85);
+  }
+  const inputPath = args[inputIndex + 1];
+  const expectedInputPath = path.join(
+    process.cwd(),
+    "dist",
+    "release",
+    upload.searchParams.get("name"),
+  );
+  if (inputPath !== expectedInputPath) {
+    process.stderr.write("release asset input path is unexpected\\n");
+    process.exit(86);
+  }
+  const content = readFileSync(inputPath);
+  const failAfter = Number(process.env.TAPZIQ_TEST_FAIL_UPLOAD_AFTER);
+  if (Number.isSafeInteger(failAfter) && state.assets.length >= failAfter) process.exit(77);
   const headerIndex = args.indexOf("-H");
   const contentType = args[headerIndex + 1].replace(/^Content-Type: /, "");
   const asset = {
@@ -599,6 +616,68 @@ test("a tracked exact ancestor release is recovered before the workflow continue
       readFileSync(path.join(fixture.root, "gh-state.json"), "utf8"),
       publishedState,
     );
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("a tracked exact ancestor resumes a matching empty draft", () => {
+  const fixture = createFixture({
+    fullReconcile: true,
+    generatedReleaseCommit: true,
+    releaseCommit: true,
+    withTag: true,
+  });
+  try {
+    configureTrackedAncestor(fixture);
+    const recoveryEnvironment = {
+      TAPZIQ_TEST_EXPECT_MINIMIZED_ENV: "1",
+      TAPZIQ_TEST_EXPECT_PACKAGE_SMOKE: "0",
+      TAPZIQ_TEST_RECONCILE: "1",
+    };
+
+    const interrupted = runHelper(fixture, {
+      ...recoveryEnvironment,
+      TAPZIQ_TEST_FAIL_UPLOAD_AFTER: "0",
+    });
+    assert.equal(interrupted.status, 1);
+    assert.match(interrupted.stderr, /GitHub asset upload failed/);
+    assertNoHandledOutput(fixture, interrupted);
+    assertWorkflowCheckoutRestored(fixture);
+    const emptyDraft = JSON.parse(
+      readFileSync(path.join(fixture.root, "gh-state.json"), "utf8"),
+    );
+    assert.equal(emptyDraft.published, false);
+    assert.equal(emptyDraft.target_commitish, "main");
+    assert.deepEqual(emptyDraft.assets, []);
+    assert.equal(existsSync(path.join(fixture.root, "verify-record")), false);
+
+    for (const record of ["package-record", "smoke-record"]) {
+      rmSync(path.join(fixture.root, record), { force: true });
+    }
+    const resumed = runHelper(fixture, recoveryEnvironment);
+    assert.equal(resumed.status, 0, resumed.stderr);
+    assert.equal(resumed.output, "handled=false\n");
+    assertWorkflowCheckoutRestored(fixture);
+    assert.equal(
+      readFileSync(path.join(fixture.root, "package-record"), "utf8"),
+      `0.2.0 ${fixture.releaseHead} --allow-existing-tag\n`,
+    );
+    assert.equal(
+      readFileSync(path.join(fixture.root, "verify-record"), "utf8"),
+      `0.2.0 ${fixture.releaseHead}\n`,
+    );
+    assert.equal(
+      readFileSync(path.join(fixture.root, "smoke-record"), "utf8"),
+      "0\n",
+    );
+    const published = JSON.parse(
+      readFileSync(path.join(fixture.root, "gh-state.json"), "utf8"),
+    );
+    assert.equal(published.published, true);
+    assert.equal(published.target_commitish, "main");
+    assert.equal(published.deleted_assets, 0);
+    assert.equal(published.assets.length, 4);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
