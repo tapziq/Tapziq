@@ -21,6 +21,10 @@ const repositoryRoot = path.resolve(__dirname, "..");
 const trustedRepositoryId = "1332440403";
 const trustedRepository = "tapziq/Tapziq";
 const { sourceWithVersion } = require("./prepare-release-version.cjs");
+const vulnerableRemoteTagAwk =
+  '    END { print peeled != "" ? peeled : direct }';
+const portableRemoteTagAwk =
+  '    END { print (peeled != "" ? peeled : direct) }';
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -83,9 +87,38 @@ exit 86
   chmodSync(smokeScript, 0o755);
 }
 
+function writeHistoricalRecoveryVerifier(cwd) {
+  const verifierScript = path.join(cwd, "scripts", "verify-published-release.sh");
+  writeFileSync(verifierScript, `#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -eq 2 ]]
+[[ "$1" =~ ^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]]
+[[ "$2" == "$(git rev-parse HEAD)" ]]
+script_dir="$(cd -- "$(dirname -- "\${BASH_SOURCE[0]}")" && pwd)"
+[[ "$(cat "$script_dir/recovery-verifier-contract.txt")" == historical ]]
+[[ "$(basename -- "\${BASH_SOURCE[0]}")" != verify-published-release.sh ]]
+remote_refs="$2 refs/tags/v$1"
+remote_tag_commit="$(
+  awk '
+    $2 ~ /\\^\\{\\}$/ { peeled = $1 }
+    $2 !~ /\\^\\{\\}$/ { direct = $1 }
+${vulnerableRemoteTagAwk}
+  ' <<< "$remote_refs"
+)"
+[[ "$remote_tag_commit" == "$2" ]]
+printf 'historical-bundle %s\n' "$*" > "$TAPZIQ_TEST_VERIFY_RECORD"
+`);
+  chmodSync(verifierScript, 0o755);
+  writeFileSync(
+    path.join(cwd, "scripts", "recovery-verifier-contract.txt"),
+    "historical\n",
+  );
+}
+
 function createFixture({
   fullReconcile = false,
   generatedReleaseCommit = false,
+  historicalVerifierNeedsRepair = false,
   releaseCommit = false,
   withTag = false,
 } = {}) {
@@ -147,15 +180,19 @@ printf 'notices\n' > dist/release/THIRD_PARTY_NOTICES.md
 printf '%s\n' "$*" > "$TAPZIQ_TEST_PACKAGE_RECORD"
 `);
     chmodSync(packageScript, 0o755);
-    const verifyScript = path.join(work, "scripts", "verify-published-release.sh");
-    writeFileSync(verifyScript, `#!/usr/bin/env bash
+    if (historicalVerifierNeedsRepair) {
+      writeHistoricalRecoveryVerifier(work);
+    } else {
+      const verifyScript = path.join(work, "scripts", "verify-published-release.sh");
+      writeFileSync(verifyScript, `#!/usr/bin/env bash
 set -euo pipefail
 [[ $# -eq 2 ]]
 [[ "$1" =~ ^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]]
 [[ "$2" == "$(git rev-parse HEAD)" ]]
 printf '%s\n' "$*" > "$TAPZIQ_TEST_VERIFY_RECORD"
 `);
-    chmodSync(verifyScript, 0o755);
+      chmodSync(verifyScript, 0o755);
+    }
     const smokeScript = path.join(work, "scripts", "smoke-test-release-apk.sh");
     writeFileSync(smokeScript, `#!/usr/bin/env bash
 set -euo pipefail
@@ -348,6 +385,7 @@ if (endpoint === "repositories/${trustedRepositoryId}") {
     head: workflowHead,
     releaseHead,
     baseline: git(work, "rev-list", "-n", "1", "v0.1.0"),
+    historicalVerifierNeedsRepair,
   };
 }
 
@@ -399,6 +437,31 @@ function configureTrackedAncestor(fixture, smokeWriter = writeFrozenSmokeScript)
     },
   ]);
   smokeWriter(fixture.work);
+  const additionalPaths = [];
+  if (fixture.historicalVerifierNeedsRepair) {
+    const verifierPath = path.join(
+      fixture.work,
+      "scripts",
+      "verify-published-release.sh",
+    );
+    const historicalVerifier = readFileSync(verifierPath, "utf8");
+    assert.equal(
+      historicalVerifier.split(vulnerableRemoteTagAwk).length - 1,
+      1,
+    );
+    writeFileSync(
+      verifierPath,
+      historicalVerifier.replace(vulnerableRemoteTagAwk, portableRemoteTagAwk),
+    );
+    writeFileSync(
+      path.join(fixture.work, "scripts", "recovery-verifier-contract.txt"),
+      "workflow\n",
+    );
+    additionalPaths.push(
+      "scripts/verify-published-release.sh",
+      "scripts/recovery-verifier-contract.txt",
+    );
+  }
   writeFileSync(
     path.join(fixture.work, "fixture.txt"),
     "baseline\nfeature\nfollow-up\n",
@@ -409,6 +472,7 @@ function configureTrackedAncestor(fixture, smokeWriter = writeFrozenSmokeScript)
     "fixture.txt",
     "release/interrupted-release-recoveries.json",
     "scripts/smoke-test-release-apk.sh",
+    ...additionalPaths,
   );
   git(fixture.work, "commit", "-m", "ci: track interrupted release recovery");
   git(fixture.work, "push", "origin", "main");
@@ -561,6 +625,7 @@ test("a tracked exact ancestor release is recovered before the workflow continue
   const fixture = createFixture({
     fullReconcile: true,
     generatedReleaseCommit: true,
+    historicalVerifierNeedsRepair: true,
     releaseCommit: true,
     withTag: true,
   });
@@ -581,7 +646,7 @@ test("a tracked exact ancestor release is recovered before the workflow continue
     );
     assert.equal(
       readFileSync(path.join(fixture.root, "verify-record"), "utf8"),
-      `0.2.0 ${fixture.releaseHead}\n`,
+      `historical-bundle 0.2.0 ${fixture.releaseHead}\n`,
     );
     assert.equal(
       readFileSync(path.join(fixture.root, "smoke-record"), "utf8"),
@@ -602,6 +667,7 @@ test("a tracked exact ancestor release is recovered before the workflow continue
     ]) {
       rmSync(path.join(fixture.root, record), { force: true });
     }
+    rmSync(path.join(fixture.work, "dist"), { recursive: true, force: true });
     const checkpoint = runHelper(fixture, { TAPZIQ_TEST_RECONCILE: "1" });
     assert.equal(checkpoint.status, 0, checkpoint.stderr);
     assert.equal(checkpoint.output, "handled=false\n");
@@ -610,7 +676,7 @@ test("a tracked exact ancestor release is recovered before the workflow continue
     assert.equal(existsSync(path.join(fixture.root, "smoke-record")), false);
     assert.equal(
       readFileSync(path.join(fixture.root, "verify-record"), "utf8"),
-      `0.2.0 ${fixture.releaseHead}\n`,
+      `historical-bundle 0.2.0 ${fixture.releaseHead}\n`,
     );
     assert.equal(
       readFileSync(path.join(fixture.root, "gh-state.json"), "utf8"),
@@ -621,10 +687,56 @@ test("a tracked exact ancestor release is recovered before the workflow continue
   }
 });
 
+test("configured recovery rejects verifier changes beyond the audited repair", () => {
+  const fixture = createFixture({
+    fullReconcile: true,
+    generatedReleaseCommit: true,
+    historicalVerifierNeedsRepair: true,
+    releaseCommit: true,
+    withTag: true,
+  });
+  try {
+    configureTrackedAncestor(fixture);
+    const verifierPath = path.join(
+      fixture.work,
+      "scripts",
+      "verify-published-release.sh",
+    );
+    writeFileSync(
+      verifierPath,
+      `${readFileSync(verifierPath, "utf8")}# unexpected verifier drift\n`,
+    );
+    git(fixture.work, "add", "scripts/verify-published-release.sh");
+    git(fixture.work, "commit", "-m", "ci: introduce unexpected verifier drift");
+    git(fixture.work, "push", "origin", "main");
+    fixture.head = git(fixture.work, "rev-parse", "HEAD");
+
+    const result = runHelper(fixture, { TAPZIQ_TEST_RECONCILE: "1" });
+    assert.equal(result.status, 1);
+    assert.match(
+      result.stderr,
+      /workflow published verifier differs.*beyond the audited portability repair/i,
+    );
+    assertNoHandledOutput(fixture, result);
+    assertWorkflowCheckoutRestored(fixture);
+    for (const record of [
+      "gh-state.json",
+      "package-record",
+      "smoke-record",
+      "verify-record",
+    ]) {
+      assert.equal(existsSync(path.join(fixture.root, record)), false, record);
+    }
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("a tracked exact ancestor resumes a matching empty draft", () => {
   const fixture = createFixture({
     fullReconcile: true,
     generatedReleaseCommit: true,
+    historicalVerifierNeedsRepair: true,
     releaseCommit: true,
     withTag: true,
   });
@@ -665,7 +777,7 @@ test("a tracked exact ancestor resumes a matching empty draft", () => {
     );
     assert.equal(
       readFileSync(path.join(fixture.root, "verify-record"), "utf8"),
-      `0.2.0 ${fixture.releaseHead}\n`,
+      `historical-bundle 0.2.0 ${fixture.releaseHead}\n`,
     );
     assert.equal(
       readFileSync(path.join(fixture.root, "smoke-record"), "utf8"),
@@ -687,6 +799,7 @@ test("a failing frozen workflow smoke restores the workflow checkout", () => {
   const fixture = createFixture({
     fullReconcile: true,
     generatedReleaseCommit: true,
+    historicalVerifierNeedsRepair: true,
     releaseCommit: true,
     withTag: true,
   });

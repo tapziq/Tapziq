@@ -10,7 +10,7 @@ const {
   rmSync,
   writeFileSync,
 } = require("node:fs");
-const { createHash } = require("node:crypto");
+const { createHash, randomBytes } = require("node:crypto");
 const { tmpdir } = require("node:os");
 const { pathToFileURL } = require("node:url");
 const path = require("node:path");
@@ -27,6 +27,11 @@ const TAG_PATTERN = /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 const RELEASE_COMMIT_PATTERN =
   /^chore\(release\): ((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)) \[skip ci\]$/;
 const RECOVERY_MANIFEST_PATH = "release/interrupted-release-recoveries.json";
+const PUBLISHED_VERIFIER_PATH = "scripts/verify-published-release.sh";
+const VULNERABLE_REMOTE_TAG_AWK =
+  '    END { print peeled != "" ? peeled : direct }';
+const PORTABLE_REMOTE_TAG_AWK =
+  '    END { print (peeled != "" ? peeled : direct) }';
 const RELEASE_ASSETS = (version) => [
   {
     name: `Tapziq-v${version}.apk`,
@@ -242,6 +247,54 @@ function freezeWorkflowSmokeScript(workflowCommit) {
   } catch (error) {
     rmSync(directory, { recursive: true, force: true });
     throw error;
+  }
+}
+
+function approvedRecoveryVerifier(workflowCommit, releaseCommit) {
+  const historicalVerifier = gitFile(releaseCommit, PUBLISHED_VERIFIER_PATH);
+  const vulnerableIndex = historicalVerifier.indexOf(VULNERABLE_REMOTE_TAG_AWK);
+  if (
+    vulnerableIndex === -1
+    || historicalVerifier.indexOf(
+      VULNERABLE_REMOTE_TAG_AWK,
+      vulnerableIndex + VULNERABLE_REMOTE_TAG_AWK.length,
+    ) !== -1
+    || historicalVerifier.includes(PORTABLE_REMOTE_TAG_AWK)
+  ) {
+    fail(
+      "Configured interrupted release does not contain exactly one audited "
+        + "published-verifier portability defect.",
+    );
+  }
+  const approvedVerifier = historicalVerifier.replace(
+    VULNERABLE_REMOTE_TAG_AWK,
+    PORTABLE_REMOTE_TAG_AWK,
+  );
+  if (gitFile(workflowCommit, PUBLISHED_VERIFIER_PATH) !== approvedVerifier) {
+    fail(
+      "The workflow published verifier differs from the historical verifier "
+        + "beyond the audited portability repair.",
+    );
+  }
+  return approvedVerifier;
+}
+
+function runRecoveryVerifier(contents, version, releaseCommit) {
+  const verifierPath = path.join(
+    repositoryRoot,
+    "scripts",
+    `.tapziq-recovery-verifier.${process.pid}.${randomBytes(12).toString("hex")}.sh`,
+  );
+  try {
+    writeFileSync(verifierPath, contents, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o700,
+    });
+    chmodSync(verifierPath, 0o700);
+    run(verifierPath, [version, releaseCommit], { stdio: "inherit" });
+  } finally {
+    rmSync(verifierPath, { force: true });
   }
 }
 
@@ -802,6 +855,12 @@ async function reconcileTaggedRelease({
   postPackage,
   prePublish,
   tag,
+  verifyPublishedRelease = (version, releaseCommit) => {
+    run(path.join(repositoryRoot, PUBLISHED_VERIFIER_PATH), [
+      version,
+      releaseCommit,
+    ], { stdio: "inherit" });
+  },
 }) {
   currentTag = tag;
   expectedCommit = commit;
@@ -858,10 +917,7 @@ async function reconcileTaggedRelease({
     )) {
       fail(`Published release ${currentTag} does not satisfy the release contract.`);
     }
-    run(path.join(repositoryRoot, "scripts", "verify-published-release.sh"), [
-      version,
-      expectedCommit,
-    ], { stdio: "inherit" });
+    verifyPublishedRelease(version, expectedCommit);
     return;
   }
 
@@ -937,10 +993,7 @@ async function reconcileTaggedRelease({
   if (published.draft !== false || published.tag_name !== currentTag) {
     fail(`GitHub did not publish ${currentTag}.`);
   }
-  run(path.join(repositoryRoot, "scripts", "verify-published-release.sh"), [
-    result.version,
-    expectedCommit,
-  ], { stdio: "inherit" });
+  verifyPublishedRelease(result.version, expectedCommit);
 }
 
 async function reconcileConfiguredAncestor({
@@ -968,6 +1021,10 @@ async function reconcileConfiguredAncestor({
     manifestEntry.tag,
   );
   verifySourceVersion(version, { repositoryRoot, ref: workflowCommit });
+  const recoveryVerifier = approvedRecoveryVerifier(
+    workflowCommit,
+    manifestEntry.commit,
+  );
 
   const frozenSmoke = freezeWorkflowSmokeScript(workflowCommit);
   let reconciliationError;
@@ -1032,6 +1089,9 @@ async function reconcileConfiguredAncestor({
         );
       },
       tag: manifestEntry.tag,
+      verifyPublishedRelease(releaseVersion, releaseCommit) {
+        runRecoveryVerifier(recoveryVerifier, releaseVersion, releaseCommit);
+      },
     });
   } catch (error) {
     reconciliationError = error;

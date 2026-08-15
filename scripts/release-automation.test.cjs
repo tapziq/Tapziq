@@ -649,6 +649,41 @@ test("published verification supports clean reruns and bounded backoff", () => {
   );
 });
 
+test("published verification resolves lightweight and annotated tags with portable awk", () => {
+  const programMatch = publishedVerifierScript.match(
+    /remote_tag_commit="\$\(\n  awk '\n([\s\S]*?)\n  ' <<< "\$remote_refs"\n\)"/,
+  );
+  assert(programMatch);
+  const program = programMatch[1];
+  assert.match(
+    program,
+    /END \{ print \(peeled != "" \? peeled : direct\) \}/,
+  );
+  assert.doesNotMatch(
+    program,
+    /END \{ print peeled != "" \? peeled : direct \}/,
+  );
+
+  const directCommit = "a".repeat(40);
+  const peeledCommit = "b".repeat(40);
+  assert.equal(
+    execFileSync("awk", [program], {
+      encoding: "utf8",
+      input: `${directCommit}\trefs/tags/v1.2.3\n`,
+    }).trim(),
+    directCommit,
+  );
+  assert.equal(
+    execFileSync("awk", [program], {
+      encoding: "utf8",
+      input:
+        `${directCommit}\trefs/tags/v1.2.3\n`
+        + `${peeledCommit}\trefs/tags/v1.2.3^{}\n`,
+    }).trim(),
+    peeledCommit,
+  );
+});
+
 test("APK verification accepts portable SHA-256 tools and requires unzip", () => {
   assert.match(apkVerifierScript, /command -v unzip/);
   assert.match(apkVerifierScript, /command -v sha256sum/);
