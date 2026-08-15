@@ -113,7 +113,7 @@ remote_tag_commit="$(
   awk '
     $2 ~ /\^\{\}$/ { peeled = $1 }
     $2 !~ /\^\{\}$/ { direct = $1 }
-    END { print peeled != "" ? peeled : direct }
+    END { print (peeled != "" ? peeled : direct) }
   ' <<< "$remote_refs"
 )"
 [[ "$remote_tag_commit" == "$expected_source_commit" ]] || \
