@@ -1,3 +1,4 @@
+[![Verify and Release](https://github.com/tapziq/Tapziq/actions/workflows/release.yml/badge.svg)](https://github.com/tapziq/Tapziq/actions/workflows/release.yml)
 # Tapziq Keyboard
 
 Tapziq is a deliberately small Android keyboard. It provides a QWERTY layout,
