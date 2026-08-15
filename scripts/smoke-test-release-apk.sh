@@ -16,6 +16,15 @@ expected_version_code="$3"
 package_name="com.tapziq.keyboard"
 ime_component="$package_name/.TapziqInputMethodService"
 test_field_id="$package_name:id/test_field"
+proofread_rows_before_letters="${TAPZIQ_PROOFREAD_ROWS_BEFORE_LETTERS-1}"
+
+case "$proofread_rows_before_letters" in
+  0|1)
+    ;;
+  *)
+    fail "TAPZIQ_PROOFREAD_ROWS_BEFORE_LETTERS must be 0 or 1."
+    ;;
+esac
 
 [[ -f "$apk_path" ]] || fail "APK does not exist: $apk_path"
 command -v adb >/dev/null 2>&1 || fail "adb is required for the emulator smoke test."
@@ -99,6 +108,22 @@ print(f"{(left + right) // 2} {(top + bottom) // 2}")
 PY
 }
 
+node_text() {
+  local attribute="$1"
+  local expected="$2"
+  python3 - "$ui_dump" "$attribute" "$expected" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+path, attribute, expected = sys.argv[1:]
+matches = [node for node in ET.parse(path).iter("node")
+           if node.attrib.get(attribute) == expected]
+if len(matches) != 1:
+    raise SystemExit(1)
+print(matches[0].attrib.get("text", ""))
+PY
+}
+
 field_coordinates=""
 for attempt in 1 2 3 4 5; do
   dump_ui
@@ -176,26 +201,41 @@ else
 fi
 key_x=$((ime_left + panel_padding + (ime_width - 2 * panel_padding) / 20))
 # Ordinary prose fields now have a full-width Proofread row before QWERTY.
-# Tap the center of the q key in the following row, preserving a real IME tap.
-proofread_rows_before_letters=1
+# Interrupted-release recovery can explicitly select the older layout with no
+# Proofread row. Tap the center of the q key while preserving a real IME tap.
 key_y=$((ime_top + top_padding \
   + proofread_rows_before_letters * row_height + row_height / 2))
 adb shell input tap "$key_x" "$key_y"
 sleep 1
-dump_ui
 
-typed_text="$(python3 - "$ui_dump" "$test_field_id" <<'PY'
-import sys
-import xml.etree.ElementTree as ET
+typed_text=""
+field_was_read=false
+ime_hide_attempted=false
+for attempt in 1 2 3 4 5; do
+  dump_ui
+  if candidate_typed_text="$(node_text resource-id "$test_field_id")"; then
+    typed_text="$candidate_typed_text"
+    field_was_read=true
+    if [[ "$typed_text" == q || "$typed_text" == Q ]]; then
+      break
+    fi
+  elif [[ "$ime_hide_attempted" == false ]]; then
+    # UIAutomator can briefly return the IME hierarchy instead of the focused
+    # application. Press Back only while Android still reports the IME shown,
+    # so the activity remains in front while its field becomes inspectable.
+    if current_input_method_dump="$(
+      adb shell dumpsys input_method 2>/dev/null | tr -d '\r'
+    )" && grep -Fq 'mInputShown=true' <<< "$current_input_method_dump"; then
+      adb shell input keyevent KEYCODE_BACK >/dev/null || \
+        fail "Could not hide Tapziq's input-method window for field verification."
+      ime_hide_attempted=true
+    fi
+  fi
+  sleep 2
+done
 
-path, resource_id = sys.argv[1:]
-matches = [node for node in ET.parse(path).iter("node")
-           if node.attrib.get("resource-id") == resource_id]
-if len(matches) != 1:
-    raise SystemExit(1)
-print(matches[0].attrib.get("text", ""))
-PY
-)" || fail "Could not read Tapziq's test text field."
+[[ "$field_was_read" == true ]] || \
+  fail "Could not read Tapziq's test text field."
 [[ "$typed_text" == q || "$typed_text" == Q ]] || \
   fail "Tapziq displayed its keyboard but did not type through its input connection."
 

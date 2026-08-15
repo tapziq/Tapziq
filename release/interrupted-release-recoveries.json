@@ -1,0 +1,9 @@
+{
+  "recoveries": [
+    {
+      "tag": "v0.1.1",
+      "commit": "93dba3b8a71e5543ad4c1511f89c723309c03919",
+      "proofreadRowsBeforeLetters": 0
+    }
+  ]
+}

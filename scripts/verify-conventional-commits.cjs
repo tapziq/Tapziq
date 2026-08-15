@@ -7,6 +7,13 @@ const stableTagPattern =
   /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 const conventionalHeaderPattern =
   /^[a-z][a-z0-9_]*(?:\([^\r\n()]+\))?!?: \S.*$/u;
+// Temporary recovery exception. Remove after v0.2.0 is published. Binding the
+// waiver to v0.1.1 makes it expire once the next stable tag becomes reachable.
+const temporaryNonConventionalCommitWaiver = Object.freeze({
+  latestTag: "v0.1.1",
+  hash: "6c8f38a99dd1debaaf33311c828bf3af139cc869",
+  header: "Add CI badge to README for release verification",
+});
 
 function stableVersion(tag) {
   const match = stableTagPattern.exec(tag);
@@ -63,6 +70,18 @@ function isConventionalCommit(message) {
   return conventionalHeaderPattern.test(header);
 }
 
+function isTemporarilyWaivedCommit({ hash, message }, latestTag) {
+  const [header = ""] = message.split(/\r?\n/u, 1);
+  return latestTag === temporaryNonConventionalCommitWaiver.latestTag
+    && hash === temporaryNonConventionalCommitWaiver.hash
+    && header === temporaryNonConventionalCommitWaiver.header;
+}
+
+function isAcceptedCommit(commit, latestTag) {
+  return isConventionalCommit(commit.message)
+    || isTemporarilyWaivedCommit(commit, latestTag);
+}
+
 function git(args) {
   return execFileSync("git", args, {
     cwd: process.cwd(),
@@ -88,7 +107,7 @@ function main() {
     `${latestTag}..HEAD`,
   ]));
   const invalidCommits = commits.filter(
-    ({ message }) => !isConventionalCommit(message),
+    (commit) => !isAcceptedCommit(commit, latestTag),
   );
 
   if (invalidCommits.length > 0) {
@@ -103,8 +122,14 @@ function main() {
     );
   }
 
+  const waivedCommitCount = commits.filter(
+    (commit) => !isConventionalCommit(commit.message)
+      && isTemporarilyWaivedCommit(commit, latestTag),
+  ).length;
   console.log(
-    `Verified ${commits.length} non-merge Conventional Commit(s) after ${latestTag}.`,
+    `Verified ${commits.length - waivedCommitCount} non-merge Conventional `
+      + `Commit(s) after ${latestTag}; accepted ${waivedCommitCount} temporary `
+      + "exact-SHA waiver(s).",
   );
 }
 
@@ -119,7 +144,9 @@ if (require.main === module) {
 
 module.exports = {
   compareStableTags,
+  isAcceptedCommit,
   isConventionalCommit,
+  isTemporarilyWaivedCommit,
   parseGitLog,
   selectLatestStableTag,
 };
