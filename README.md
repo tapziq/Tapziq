@@ -59,7 +59,7 @@ enable/select Tapziq again.
 Requirements:
 
 - Android SDK 36
-- JDK 17 or newer
+- JDK 21 or newer
 
 ```sh
 export ANDROID_HOME="$HOME/Library/Android/sdk"

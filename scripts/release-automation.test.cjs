@@ -690,12 +690,15 @@ test("workflow keeps secrets out of PR verification and uses safe token scopes",
   assert.match(workflow, /environment: production/);
   assert.equal((workflow.match(/fetch-depth: 0/g) || []).length, 2);
   assert.equal((workflow.match(/persist-credentials: false/g) || []).length, 2);
+  assert.equal((workflow.match(/- name: Set up JDK 21/g) || []).length, 2);
+  assert.equal((workflow.match(/java-version: "21"/g) || []).length, 2);
+  assert.doesNotMatch(workflow, /Set up JDK 17|java-version: "17"/);
   assert.match(
     workflow,
     /Verify Conventional Commit history\n        run: npm run check:commits/,
   );
   const preflightStep = workflow.match(
-    /      - name: Verify production release controls\n[\s\S]*?(?=\n      - name: Set up JDK 17)/,
+    /      - name: Verify production release controls\n[\s\S]*?(?=\n      - name: Set up JDK 21)/,
   );
   assert(preflightStep);
   assert.doesNotMatch(preflightStep[0], /GH_TOKEN:/);
