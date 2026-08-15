@@ -45,6 +45,10 @@ const sourceBuildScript = readFileSync(
   path.join(repositoryRoot, "app", "build.gradle.kts"),
   "utf8",
 );
+const versionFixtureSourceBuildScript = sourceWithVersion(
+  sourceBuildScript,
+  "0.1.0",
+);
 const publishedVerifierScript = readFileSync(
   path.join(repositoryRoot, "scripts", "verify-published-release.sh"),
   "utf8",
@@ -378,7 +382,7 @@ function createVersionFixture() {
   mkdirSync(path.join(fixtureRepository, "app"), { recursive: true });
   writeFileSync(
     path.join(fixtureRepository, "app", "build.gradle.kts"),
-    sourceBuildScript,
+    versionFixtureSourceBuildScript,
   );
   writeFileSync(path.join(fixtureRepository, "product.txt"), "baseline\n");
   execFileSync("git", ["init", "-b", "main"], { cwd: fixtureRepository });
@@ -458,14 +462,17 @@ test("source version preparation rejects dirty or malformed state", (t) => {
   );
   assert.throws(
     () => sourceMetadata(
-      sourceBuildScript
+      versionFixtureSourceBuildScript
         + '\nval tapziqSourceVersionName = "9.9.9"\n',
     ),
     /exactly one tapziqSourceVersionName declaration/,
   );
   assert.throws(
     () => sourceMetadata(
-      sourceBuildScript.replace("tapziqSourceVersionCode = 1", "tapziqSourceVersionCode = 2"),
+      versionFixtureSourceBuildScript.replace(
+        "tapziqSourceVersionCode = 1",
+        "tapziqSourceVersionCode = 2",
+      ),
     ),
     /requires Android versionCode 1, not 2/,
   );
