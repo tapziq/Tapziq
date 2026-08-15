@@ -265,9 +265,13 @@ if (endpoint === "repositories/${trustedRepositoryId}") {
   process.stdout.write(JSON.stringify(state ? [releaseJson(state, !state.published)] : []));
 } else if (endpoint === "repositories/${trustedRepositoryId}/releases" && method === "POST") {
   if (process.env.TAPZIQ_TEST_RECONCILE !== "1" || state) process.exit(72);
+  if (field("target_commitish") !== undefined) {
+    process.stderr.write("existing-tag release creation must omit target_commitish\\n");
+    process.exit(84);
+  }
   state = {
     tag_name: field("tag_name"),
-    target_commitish: field("target_commitish"),
+    target_commitish: "main",
     name: field("name"),
     body: field("body"),
     assets: [],
@@ -571,6 +575,7 @@ test("a tracked exact ancestor release is recovered before the workflow continue
       "utf8",
     );
     assert.equal(JSON.parse(publishedState).published, true);
+    assert.equal(JSON.parse(publishedState).target_commitish, "main");
 
     for (const record of [
       "github-output",
@@ -718,6 +723,35 @@ test("a future semantic-release note without its tag fails closed", () => {
   }
 });
 
+test("an exact orphan tag publishes without a historical target commitish", () => {
+  const fixture = createFixture({
+    fullReconcile: true,
+    generatedReleaseCommit: true,
+    releaseCommit: true,
+    withTag: true,
+  });
+  try {
+    const result = runHelper(fixture, { TAPZIQ_TEST_RECONCILE: "1" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.output, "handled=true\n");
+    assert.equal(
+      readFileSync(path.join(fixture.root, "package-record"), "utf8"),
+      `0.2.0 ${fixture.releaseHead} --allow-existing-tag\n`,
+    );
+    assert.equal(
+      readFileSync(path.join(fixture.root, "verify-record"), "utf8"),
+      `0.2.0 ${fixture.releaseHead}\n`,
+    );
+    const state = JSON.parse(
+      readFileSync(path.join(fixture.root, "gh-state.json"), "utf8"),
+    );
+    assert.equal(state.published, true);
+    assert.equal(state.target_commitish, "main");
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("an exact orphan tag resumes a matching partial draft and publishes once", () => {
   const fixture = createFixture({
     fullReconcile: true,
@@ -736,6 +770,7 @@ test("an exact orphan tag resumes a matching partial draft and publishes once", 
       readFileSync(path.join(fixture.root, "gh-state.json"), "utf8"),
     );
     assert.equal(partialState.published, false);
+    assert.equal(partialState.target_commitish, "main");
     assert.equal(partialState.assets.length, 2);
 
     rmSync(path.join(fixture.work, "dist"), { recursive: true, force: true });
@@ -757,6 +792,7 @@ test("an exact orphan tag resumes a matching partial draft and publishes once", 
     );
     const state = JSON.parse(readFileSync(path.join(fixture.root, "gh-state.json"), "utf8"));
     assert.equal(state.published, true);
+    assert.equal(state.target_commitish, "main");
     assert.equal(state.deleted_assets, 1);
     assert.deepEqual(
       state.assets

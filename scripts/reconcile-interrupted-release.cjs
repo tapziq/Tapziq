@@ -898,10 +898,12 @@ async function reconcileTaggedRelease({
   }
 
   if (!draft) {
+    // The exact remote tag is already verified above. Do not pass its commit as
+    // target_commitish: Actions' GITHUB_TOKEN cannot target historical commits
+    // whose workflow files differ from the default branch.
     draft = ghApi(`repositories/${TRUSTED_REPOSITORY_ID}/releases`, [
       "--method", "POST",
       "-f", `tag_name=${currentTag}`,
-      "-f", `target_commitish=${expectedCommit}`,
       "-f", `name=Tapziq Keyboard ${result.version}`,
       "-f", `body=${expectedBody}`,
       "-F", "draft=true",
