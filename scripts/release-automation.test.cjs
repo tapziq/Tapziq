@@ -683,8 +683,75 @@ test("production smoke test installs and types through the selected IME", () => 
   assert.match(emulatorSmokeScript, /android:id\/aerr_wait/);
   assert.match(emulatorSmokeScript, /dumpsys window windows/);
   assert.match(emulatorSmokeScript, /adb shell input tap "\$key_x" "\$key_y"/);
-  assert.match(emulatorSmokeScript, /proofread_rows_before_letters=1/);
-  assert.match(emulatorSmokeScript, /typed_text/);
+  assert.match(
+    emulatorSmokeScript,
+    /proofread_rows_before_letters="\$\{TAPZIQ_PROOFREAD_ROWS_BEFORE_LETTERS-1\}"/,
+  );
+  assert.match(
+    emulatorSmokeScript,
+    /TAPZIQ_PROOFREAD_ROWS_BEFORE_LETTERS must be 0 or 1/,
+  );
+  assert.match(
+    emulatorSmokeScript,
+    /field_was_read=false\nime_hide_attempted=false\nfor attempt in 1 2 3 4 5; do/,
+  );
+  assert.match(emulatorSmokeScript, /candidate_typed_text/);
+  assert.match(
+    emulatorSmokeScript,
+    /ime_hide_attempted[\s\S]*?mInputShown=true[\s\S]*?input keyevent KEYCODE_BACK/,
+  );
+  assert.match(emulatorSmokeScript, /Could not read Tapziq's test text field/);
+  assert.match(
+    emulatorSmokeScript,
+    /displayed its keyboard but did not type through its input connection/,
+  );
+});
+
+test("production smoke test strictly validates its keyboard-row override", (t) => {
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "tapziq-smoke-env-test-"));
+  const missingApk = path.join(fixtureRoot, "missing.apk");
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+
+  function runSmokeScript(override) {
+    const environment = { ...process.env };
+    if (override === undefined) {
+      delete environment.TAPZIQ_PROOFREAD_ROWS_BEFORE_LETTERS;
+    } else {
+      environment.TAPZIQ_PROOFREAD_ROWS_BEFORE_LETTERS = override;
+    }
+    return spawnSync(
+      "bash",
+      [
+        path.join(repositoryRoot, "scripts", "smoke-test-release-apk.sh"),
+        missingApk,
+        "0.2.0",
+        "2000",
+      ],
+      { encoding: "utf8", env: environment },
+    );
+  }
+
+  for (const invalidOverride of ["", "00", "01", "2", "-1", " 1", "1 "]) {
+    const result = runSmokeScript(invalidOverride);
+    assert.equal(result.status, 1, invalidOverride);
+    assert.match(
+      result.stderr,
+      /TAPZIQ_PROOFREAD_ROWS_BEFORE_LETTERS must be 0 or 1/,
+      invalidOverride,
+    );
+    assert.doesNotMatch(result.stderr, /APK does not exist/, invalidOverride);
+  }
+
+  for (const validOverride of [undefined, "0", "1"]) {
+    const result = runSmokeScript(validOverride);
+    assert.equal(result.status, 1, String(validOverride));
+    assert.match(result.stderr, /APK does not exist/, String(validOverride));
+    assert.doesNotMatch(
+      result.stderr,
+      /TAPZIQ_PROOFREAD_ROWS_BEFORE_LETTERS must be 0 or 1/,
+      String(validOverride),
+    );
+  }
 });
 
 test("workflow keeps secrets out of PR verification and uses safe token scopes", () => {
@@ -732,6 +799,7 @@ test("workflow keeps secrets out of PR verification and uses safe token scopes",
   assert.match(productionPublisherScript, /grep -Ec '\^handled=\(true\|false\)\$'/);
   assert.match(productionPublisherScript, /npm run release/);
   assert.match(workflow, /\n  release:[\s\S]*?\n    runs-on: macos-15-intel/);
+  assert.match(workflow, /\n  release:[\s\S]*?\n    timeout-minutes: 90/);
   assert.doesNotMatch(workflow, /99-kvm4all|disable-linux-hw-accel/);
   assert.match(publishStep[0], /target: aosp_atd/);
   assert.match(publishStep[0], /arch: x86_64/);

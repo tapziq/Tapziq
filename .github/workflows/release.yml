@@ -74,7 +74,7 @@ jobs:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: verify
     runs-on: macos-15-intel
-    timeout-minutes: 45
+    timeout-minutes: 90
     environment: production
     permissions:
       attestations: read

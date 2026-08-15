@@ -2,13 +2,22 @@
 "use strict";
 
 const { execFileSync, spawnSync } = require("node:child_process");
-const { appendFileSync, readFileSync } = require("node:fs");
+const {
+  appendFileSync,
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} = require("node:fs");
 const { createHash } = require("node:crypto");
+const { tmpdir } = require("node:os");
 const { pathToFileURL } = require("node:url");
 const path = require("node:path");
 const process = require("node:process");
 const semver = require("semver");
 const {
+  sourceVersionCode,
   sourceWithVersion,
   verifySourceVersion,
 } = require("./prepare-release-version.cjs");
@@ -17,6 +26,7 @@ const TRUSTED_REPOSITORY_ID = "1332440403";
 const TAG_PATTERN = /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 const RELEASE_COMMIT_PATTERN =
   /^chore\(release\): ((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)) \[skip ci\]$/;
+const RECOVERY_MANIFEST_PATH = "release/interrupted-release-recoveries.json";
 const RELEASE_ASSETS = (version) => [
   {
     name: `Tapziq-v${version}.apk`,
@@ -109,6 +119,135 @@ function setHandled(value) {
   process.stdout.write(`handled=${value}\n`);
 }
 
+function gitFile(ref, relativePath) {
+  return execFileSync("git", ["show", `${ref}:${relativePath}`], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+function hasExactKeys(value, keys) {
+  return value !== null
+    && !Array.isArray(value)
+    && typeof value === "object"
+    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
+}
+
+function loadRecoveryManifest(workflowCommit) {
+  let manifest;
+  try {
+    manifest = JSON.parse(gitFile(workflowCommit, RECOVERY_MANIFEST_PATH));
+  } catch (error) {
+    fail(`Interrupted-release recovery manifest is unreadable: ${error.message}`);
+  }
+  if (!hasExactKeys(manifest, ["recoveries"]) || !Array.isArray(manifest.recoveries)) {
+    fail("Interrupted-release recovery manifest has an invalid top-level schema.");
+  }
+
+  const byTag = new Map();
+  const commits = new Set();
+  for (const recovery of manifest.recoveries) {
+    if (!hasExactKeys(recovery, [
+      "commit",
+      "proofreadRowsBeforeLetters",
+      "tag",
+    ])) {
+      fail("Interrupted-release recovery manifest contains an invalid entry.");
+    }
+    if (!TAG_PATTERN.test(recovery.tag)) {
+      fail("Interrupted-release recovery manifest contains an invalid tag.");
+    }
+    if (!/^[0-9a-f]{40}$/.test(recovery.commit)) {
+      fail("Interrupted-release recovery manifest requires a full lowercase commit SHA.");
+    }
+    if (![0, 1].includes(recovery.proofreadRowsBeforeLetters)) {
+      fail("Interrupted-release recovery manifest requires a keyboard row count of 0 or 1.");
+    }
+    if (byTag.has(recovery.tag) || commits.has(recovery.commit)) {
+      fail("Interrupted-release recovery manifest contains a duplicate tag or commit.");
+    }
+    byTag.set(recovery.tag, Object.freeze({ ...recovery }));
+    commits.add(recovery.commit);
+  }
+  return byTag;
+}
+
+function validateGeneratedReleaseCommit(parentCommit, releaseCommit, expectedTag) {
+  const commitRecord = git("rev-list", "--parents", "-n", "1", releaseCommit)
+    .split(/\s+/);
+  if (
+    commitRecord.length !== 2
+    || commitRecord[0] !== releaseCommit
+    || commitRecord[1] !== parentCommit
+  ) {
+    fail("Configured interrupted release is not one direct generated release commit.");
+  }
+  const subject = git("show", "-s", "--format=%s", releaseCommit);
+  const subjectMatch = RELEASE_COMMIT_PATTERN.exec(subject);
+  if (subjectMatch === null || `v${subjectMatch[1]}` !== expectedTag) {
+    fail("Configured interrupted release has an invalid generated release subject.");
+  }
+  const changedPaths = git(
+    "diff-tree",
+    "--no-commit-id",
+    "--name-only",
+    "-r",
+    parentCommit,
+    releaseCommit,
+  ).split("\n").filter(Boolean);
+  if (changedPaths.length !== 1 || changedPaths[0] !== "app/build.gradle.kts") {
+    fail("Configured interrupted release changed files outside source version metadata.");
+  }
+  try {
+    verifySourceVersion(subjectMatch[1], {
+      repositoryRoot,
+      ref: releaseCommit,
+    });
+    const parentSource = gitFile(parentCommit, "app/build.gradle.kts");
+    const releaseSource = gitFile(releaseCommit, "app/build.gradle.kts");
+    if (releaseSource !== sourceWithVersion(parentSource, subjectMatch[1])) {
+      fail("Configured interrupted release changed non-version Gradle metadata.");
+    }
+  } catch (error) {
+    fail(`Configured interrupted release has invalid source metadata: ${error.message}`);
+  }
+  return subjectMatch[1];
+}
+
+function isOnFirstParentChain(ancestor, descendant) {
+  return git("rev-list", "--first-parent", descendant)
+    .split("\n")
+    .includes(ancestor);
+}
+
+function freezeWorkflowSmokeScript(workflowCommit) {
+  const temporaryRoot = process.env.RUNNER_TEMP || tmpdir();
+  const directory = mkdtempSync(path.join(temporaryRoot, "tapziq-recovery."));
+  const scriptPath = path.join(directory, "smoke-test-release-apk.sh");
+  try {
+    writeFileSync(
+      scriptPath,
+      gitFile(workflowCommit, "scripts/smoke-test-release-apk.sh"),
+      { encoding: "utf8", flag: "wx", mode: 0o700 },
+    );
+    chmodSync(scriptPath, 0o700);
+    return { directory, scriptPath };
+  } catch (error) {
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function childEnvironment(overrides, omittedNames) {
+  const environment = { ...process.env, ...overrides };
+  for (const name of omittedNames) {
+    delete environment[name];
+  }
+  return environment;
+}
+
 function parseRemoteRef(output, expectedRef) {
   const rows = output === "" ? [] : output.split("\n");
   if (rows.length !== 1) {
@@ -148,6 +287,96 @@ function resolveRemoteTag(tag) {
   return refs.get(peeledRef) || refs.get(directRef);
 }
 
+function verifyPinnedLightweightTag({ commit, tag }) {
+  const localRef = `refs/tags/${tag}`;
+  if (
+    git("cat-file", "-t", localRef) !== "commit"
+    || git("rev-parse", "--verify", localRef) !== commit
+  ) {
+    fail("Configured interrupted-release tag is not the exact local lightweight tag.");
+  }
+  const remoteRef = `refs/tags/${tag}`;
+  const remoteOutput = git("ls-remote", repositoryUrl, remoteRef, `${remoteRef}^{}`);
+  const rows = remoteOutput === "" ? [] : remoteOutput.split("\n");
+  if (rows.length !== 1 || rows[0] !== `${commit}\t${remoteRef}`) {
+    fail("Configured interrupted-release tag is not the exact remote lightweight tag.");
+  }
+}
+
+function verifyConfiguredAncestorRemoteState(
+  manifestEntry,
+  workflowCommit,
+  latestPublishedTag,
+  {
+    expectedNewerTags = [manifestEntry.tag],
+    verifyLatestRelease = true,
+  } = {},
+) {
+  const remoteHead = parseRemoteRef(
+    git("ls-remote", repositoryUrl, "refs/heads/main"),
+    "refs/heads/main",
+  );
+  if (remoteHead !== workflowCommit) {
+    fail("Remote main changed while the interrupted ancestor release was recovered.");
+  }
+  const publishedVersion = latestPublishedTag.slice(1);
+  const newerTags = remoteStableTags()
+    .filter((tag) => semver.gt(tag.slice(1), publishedVersion))
+    .sort((first, second) => semver.compare(first.slice(1), second.slice(1)));
+  const newerNotes = remoteSemanticReleaseNoteTags()
+    .filter((tag) => semver.gt(tag.slice(1), publishedVersion))
+    .sort((first, second) => semver.compare(first.slice(1), second.slice(1)));
+  if (
+    JSON.stringify(newerTags) !== JSON.stringify(expectedNewerTags)
+    || JSON.stringify(newerNotes) !== JSON.stringify(expectedNewerTags)
+  ) {
+    fail("Interrupted ancestor release is no longer the sole newer tag and note.");
+  }
+  if (verifyLatestRelease) {
+    const latestRelease = ghApi(
+      `repositories/${TRUSTED_REPOSITORY_ID}/releases/latest`,
+    );
+    if (!latestRelease || latestRelease.tag_name !== latestPublishedTag) {
+      fail("GitHub's latest Release changed during interrupted ancestor recovery.");
+    }
+  }
+  verifyPinnedLightweightTag(manifestEntry);
+  parseSemanticReleaseNote(manifestEntry.tag);
+}
+
+function verifyExactTaggedRemoteState(tag, commit, latestPublishedTag) {
+  const remoteHead = parseRemoteRef(
+    git("ls-remote", repositoryUrl, "refs/heads/main"),
+    "refs/heads/main",
+  );
+  if (remoteHead !== commit) {
+    fail("Remote main changed while the exact interrupted release was recovered.");
+  }
+  const publishedVersion = latestPublishedTag.slice(1);
+  const newerTags = remoteStableTags()
+    .filter((candidate) => semver.gt(candidate.slice(1), publishedVersion))
+    .sort((first, second) => semver.compare(first.slice(1), second.slice(1)));
+  const newerNotes = remoteSemanticReleaseNoteTags()
+    .filter((candidate) => semver.gt(candidate.slice(1), publishedVersion))
+    .sort((first, second) => semver.compare(first.slice(1), second.slice(1)));
+  if (
+    JSON.stringify(newerTags) !== JSON.stringify([tag])
+    || JSON.stringify(newerNotes) !== JSON.stringify([tag])
+  ) {
+    fail("Exact interrupted release is no longer the sole newer tag and note.");
+  }
+  const latestRelease = ghApi(
+    `repositories/${TRUSTED_REPOSITORY_ID}/releases/latest`,
+  );
+  if (!latestRelease || latestRelease.tag_name !== latestPublishedTag) {
+    fail("GitHub's latest Release changed during exact interrupted-release recovery.");
+  }
+  if (resolveRemoteTag(tag) !== commit) {
+    fail("Remote release tag changed during exact interrupted-release recovery.");
+  }
+  parseSemanticReleaseNote(tag);
+}
+
 function remoteSemanticReleaseNoteTags() {
   const output = git("ls-remote", repositoryUrl, "refs/notes/semantic-release-v*");
   if (output === "") {
@@ -169,6 +398,25 @@ function remoteSemanticReleaseNoteTags() {
       fail(`Multiple semantic-release note references use ${match[1]}.`);
     }
     tags.add(match[1]);
+  }
+  return [...tags];
+}
+
+function remoteStableTags() {
+  const output = git("ls-remote", repositoryUrl, "refs/tags/v*");
+  if (output === "") {
+    return [];
+  }
+  const tags = new Set();
+  for (const row of output.split("\n")) {
+    const [sha, ref, extra] = row.split(/\s+/);
+    const match = /^refs\/tags\/(.+?)(?:\^\{\})?$/.exec(ref);
+    if (extra !== undefined || !/^[0-9a-f]{40}$/.test(sha) || match === null) {
+      fail("A remote stable release tag reference is malformed.");
+    }
+    if (TAG_PATTERN.test(match[1])) {
+      tags.add(match[1]);
+    }
   }
   return [...tags];
 }
@@ -541,6 +789,276 @@ function checkoutRemoteReleaseCommit(workflowCommit, remoteCommit) {
   );
 }
 
+async function reconcileTaggedRelease({
+  commit,
+  generatedParentCommit,
+  latestPublished,
+  mergedReleaseTags,
+  packageEnvironment,
+  postPackage,
+  prePublish,
+  tag,
+}) {
+  currentTag = tag;
+  expectedCommit = commit;
+  const version = currentTag.slice(1);
+  const remoteTag = resolveRemoteTag(currentTag);
+  if (git("rev-list", "-n", "1", currentTag) !== expectedCommit || remoteTag !== expectedCommit) {
+    fail("The local and remote release tags do not both resolve to the release source commit.");
+  }
+  parseSemanticReleaseNote(currentTag);
+
+  const currentOrNewerTags = mergedReleaseTags.filter(
+    (candidate) => !semver.lt(candidate.slice(1), version),
+  );
+  if (currentOrNewerTags.length !== 1 || currentOrNewerTags[0] !== currentTag) {
+    fail("Additional semantic-version tags make release provenance ambiguous.");
+  }
+  const previousTags = mergedReleaseTags
+    .filter((candidate) => semver.lt(candidate.slice(1), version))
+    .sort((first, second) => semver.rcompare(first.slice(1), second.slice(1)));
+  if (previousTags.length === 0) {
+    fail(`Could not resolve the previous stable release before ${currentTag}.`);
+  }
+  const [previousTag] = previousTags;
+  const previousRemoteTag = resolveRemoteTag(previousTag);
+  if (git("rev-list", "-n", "1", previousTag) !== previousRemoteTag) {
+    fail("The previous release tag has inconsistent local and remote provenance.");
+  }
+  if (generatedParentCommit) {
+    try {
+      verifySourceVersion(previousTag.slice(1), {
+        repositoryRoot,
+        ref: generatedParentCommit,
+      });
+    } catch (error) {
+      fail(`Generated release parent has invalid source metadata: ${error.message}`);
+    }
+  }
+  const result = await analyzeAndGenerate(previousTag, currentTag, expectedCommit);
+  expectedBody = releaseBody(result.version, result.notes);
+
+  const existingRelease = releaseApiOrNull(
+    `repositories/${TRUSTED_REPOSITORY_ID}/releases/tags/${currentTag}`,
+  );
+  if (existingRelease && existingRelease.draft === false) {
+    if (latestPublished.tag_name !== currentTag) {
+      fail(`Published release ${currentTag} is not GitHub's latest stable release.`);
+    }
+    if (!isAlreadyPublishedRelease(
+      existingRelease,
+      currentTag,
+      version,
+      expectedCommit,
+      expectedBody,
+    )) {
+      fail(`Published release ${currentTag} does not satisfy the release contract.`);
+    }
+    run(path.join(repositoryRoot, "scripts", "verify-published-release.sh"), [
+      version,
+      expectedCommit,
+    ], { stdio: "inherit" });
+    return;
+  }
+
+  if (latestPublished.tag_name !== previousTag) {
+    fail("The previous semantic-version tag is not GitHub's latest stable release.");
+  }
+
+  const drafts = ghApi(
+    `repositories/${TRUSTED_REPOSITORY_ID}/releases?per_page=100`,
+  ).filter((release) => release.tag_name === currentTag);
+  if (drafts.length > 1) {
+    fail(`Multiple GitHub releases use tag ${currentTag}.`);
+  }
+  if (existingRelease && !drafts.some(({ id }) => id === existingRelease.id)) {
+    fail(`The API returned inconsistent release state for ${currentTag}.`);
+  }
+  let draft = drafts[0];
+  if (draft && !matchingDraftMetadata(
+    draft,
+    currentTag,
+    result.version,
+    expectedCommit,
+    expectedBody,
+  )) {
+    fail(`Existing draft ${currentTag} does not exactly match the expected release.`);
+  }
+
+  run(path.join(repositoryRoot, "scripts", "package-semantic-release.sh"), [
+    result.version,
+    expectedCommit,
+    "--allow-existing-tag",
+  ], {
+    env: packageEnvironment,
+    stdio: "inherit",
+  });
+  if (postPackage) {
+    await postPackage(result);
+  }
+
+  if (!draft) {
+    draft = ghApi(`repositories/${TRUSTED_REPOSITORY_ID}/releases`, [
+      "--method", "POST",
+      "-f", `tag_name=${currentTag}`,
+      "-f", `target_commitish=${expectedCommit}`,
+      "-f", `name=Tapziq Keyboard ${result.version}`,
+      "-f", `body=${expectedBody}`,
+      "-F", "draft=true",
+      "-F", "prerelease=false",
+      "-f", "make_latest=true",
+    ]);
+    if (!matchingDraftMetadata(
+      draft,
+      currentTag,
+      result.version,
+      expectedCommit,
+      expectedBody,
+    ) || draft.assets.length !== 0) {
+      fail("GitHub did not create the exact expected draft release.");
+    }
+  }
+
+  uploadAssets(draft, result.version);
+  if (prePublish) {
+    await prePublish();
+  }
+  const published = ghApi(`repositories/${TRUSTED_REPOSITORY_ID}/releases/${draft.id}`, [
+    "--method", "PATCH",
+    "-F", "draft=false",
+    "-f", "make_latest=true",
+  ]);
+  if (published.draft !== false || published.tag_name !== currentTag) {
+    fail(`GitHub did not publish ${currentTag}.`);
+  }
+  run(path.join(repositoryRoot, "scripts", "verify-published-release.sh"), [
+    result.version,
+    expectedCommit,
+  ], { stdio: "inherit" });
+}
+
+async function reconcileConfiguredAncestor({
+  latestPublished,
+  manifestEntry,
+  mergedReleaseTags,
+  workflowCommit,
+}) {
+  const expectedNewerTags = latestPublished.tag_name === manifestEntry.tag
+    ? []
+    : [manifestEntry.tag];
+  verifyConfiguredAncestorRemoteState(
+    manifestEntry,
+    workflowCommit,
+    latestPublished.tag_name,
+    { expectedNewerTags },
+  );
+  if (!isOnFirstParentChain(manifestEntry.commit, workflowCommit)) {
+    fail("Configured interrupted release is not on GITHUB_SHA's first-parent chain.");
+  }
+  const parentCommit = git("rev-parse", `${manifestEntry.commit}^`);
+  const version = validateGeneratedReleaseCommit(
+    parentCommit,
+    manifestEntry.commit,
+    manifestEntry.tag,
+  );
+  verifySourceVersion(version, { repositoryRoot, ref: workflowCommit });
+
+  const frozenSmoke = freezeWorkflowSmokeScript(workflowCommit);
+  let reconciliationError;
+  try {
+    git("checkout", "--detach", manifestEntry.commit);
+    if (git("status", "--porcelain", "--untracked-files=normal") !== "") {
+      fail("Checking out the configured interrupted release produced a dirty worktree.");
+    }
+    await reconcileTaggedRelease({
+      commit: manifestEntry.commit,
+      generatedParentCommit: parentCommit,
+      latestPublished,
+      mergedReleaseTags,
+      packageEnvironment: childEnvironment(
+        { TAPZIQ_RUN_EMULATOR_SMOKE: "0" },
+        ["GH_TOKEN", "GITHUB_TOKEN"],
+      ),
+      postPackage(result) {
+        const apkPath = path.join(
+          repositoryRoot,
+          "dist",
+          "release",
+          `Tapziq-v${result.version}.apk`,
+        );
+        run(frozenSmoke.scriptPath, [
+          apkPath,
+          result.version,
+          String(sourceVersionCode(result.version)),
+        ], {
+          env: childEnvironment(
+            {
+              TAPZIQ_PROOFREAD_ROWS_BEFORE_LETTERS: String(
+                manifestEntry.proofreadRowsBeforeLetters,
+              ),
+            },
+            [
+              "GH_TOKEN",
+              "GITHUB_TOKEN",
+              "TAPZIQ_RELEASE_KEY_ALIAS",
+              "TAPZIQ_RELEASE_KEY_PASSWORD",
+              "TAPZIQ_RELEASE_REPOSITORY",
+              "TAPZIQ_RELEASE_STORE_BASE64",
+              "TAPZIQ_RELEASE_STORE_FILE",
+              "TAPZIQ_RELEASE_STORE_PASSWORD",
+            ],
+          ),
+          stdio: "inherit",
+        });
+        verifyConfiguredAncestorRemoteState(
+          manifestEntry,
+          workflowCommit,
+          latestPublished.tag_name,
+          { expectedNewerTags },
+        );
+      },
+      prePublish() {
+        verifyConfiguredAncestorRemoteState(
+          manifestEntry,
+          workflowCommit,
+          latestPublished.tag_name,
+          { expectedNewerTags },
+        );
+      },
+      tag: manifestEntry.tag,
+    });
+  } catch (error) {
+    reconciliationError = error;
+  }
+
+  try {
+    git("checkout", "--detach", workflowCommit);
+    if (git("rev-parse", "HEAD") !== workflowCommit) {
+      fail("Could not restore GITHUB_SHA after interrupted-release recovery.");
+    }
+    if (git("status", "--porcelain", "--untracked-files=normal") !== "") {
+      fail("Restoring GITHUB_SHA after interrupted-release recovery produced a dirty worktree.");
+    }
+    verifyConfiguredAncestorRemoteState(
+      manifestEntry,
+      workflowCommit,
+      latestPublished.tag_name,
+      { expectedNewerTags, verifyLatestRelease: false },
+    );
+  } catch (restoreError) {
+    if (reconciliationError) {
+      reconciliationError.message += ` Recovery checkout restoration failed: ${restoreError.message}`;
+    } else {
+      reconciliationError = restoreError;
+    }
+  } finally {
+    rmSync(frozenSmoke.directory, { recursive: true, force: true });
+  }
+  if (reconciliationError) {
+    throw reconciliationError;
+  }
+}
+
 async function main() {
   if (process.env.GITHUB_REF !== "refs/heads/main") {
     fail("Interrupted release reconciliation is restricted to main.");
@@ -610,9 +1128,14 @@ async function main() {
     .split("\n")
     .filter((tag) => TAG_PATTERN.test(tag));
   const latestPublishedVersion = latestPublished.tag_name.slice(1);
-  const recoveryTags = new Set(mergedReleaseTags.filter(
+  const recoveryTags = new Set(remoteStableTags().filter(
     (tag) => semver.gt(tag.slice(1), latestPublishedVersion),
   ));
+  for (const mergedTag of mergedReleaseTags.filter(
+    (tag) => semver.gt(tag.slice(1), latestPublishedVersion),
+  )) {
+    recoveryTags.add(mergedTag);
+  }
   for (const noteTag of remoteSemanticReleaseNoteTags()) {
     if (!semver.gt(noteTag.slice(1), latestPublishedVersion)) {
       continue;
@@ -623,9 +1146,7 @@ async function main() {
           + "release recovery state is ambiguous.",
       );
     }
-    if (mergedReleaseTags.includes(noteTag)) {
-      recoveryTags.add(noteTag);
-    }
+    recoveryTags.add(noteTag);
   }
 
   const releaseTags = git("tag", "--points-at", expectedCommit)
@@ -633,20 +1154,66 @@ async function main() {
     .filter((tag) => TAG_PATTERN.test(tag));
   const orderedRecoveryTags = [...recoveryTags]
     .sort((first, second) => semver.compare(first.slice(1), second.slice(1)));
-  if (
-    orderedRecoveryTags.length > 0
-    && (
+  const recoveryIsExactlyCurrent = orderedRecoveryTags.length === 1
+    && releaseTags.length === 1
+    && orderedRecoveryTags[0] === releaseTags[0];
+  if (orderedRecoveryTags.length > 0 && !recoveryIsExactlyCurrent) {
+    if (
       orderedRecoveryTags.length !== 1
-      || releaseTags.length !== 1
-      || orderedRecoveryTags[0] !== releaseTags[0]
-    )
-  ) {
-    fail(
-      "A newer reachable semantic-release tag or note lacks a matching latest "
-        + "immutable GitHub Release and is not exactly on GITHUB_SHA: "
-        + orderedRecoveryTags.join(", "),
-    );
+      || releaseTags.length !== 0
+      || expectedCommit !== workflowCommit
+      || remoteHead !== workflowCommit
+    ) {
+      fail(
+        "A newer reachable semantic-release tag or note lacks a matching latest "
+          + "immutable GitHub Release and is not an unambiguous configured "
+          + `ancestor of GITHUB_SHA: ${orderedRecoveryTags.join(", ")}`,
+      );
+    }
+    const [ancestorTag] = orderedRecoveryTags;
+    const manifestEntry = loadRecoveryManifest(workflowCommit).get(ancestorTag);
+    if (!manifestEntry) {
+      fail(
+        `Interrupted ancestor release ${ancestorTag} is not pinned in `
+          + `${RECOVERY_MANIFEST_PATH}.`,
+      );
+    }
+    if (git("rev-list", "-n", "1", ancestorTag) !== manifestEntry.commit) {
+      fail("Configured interrupted-release commit does not match its local tag.");
+    }
+    await reconcileConfiguredAncestor({
+      latestPublished,
+      manifestEntry,
+      mergedReleaseTags,
+      workflowCommit,
+    });
+    setHandled(false);
+    return;
   }
+
+  if (
+    orderedRecoveryTags.length === 0
+    && releaseTags.length === 0
+    && expectedCommit === workflowCommit
+    && remoteHead === workflowCommit
+  ) {
+    const publishedAncestor = loadRecoveryManifest(workflowCommit)
+      .get(latestPublished.tag_name);
+    if (publishedAncestor) {
+      if (git("rev-list", "-n", "1", publishedAncestor.tag) !== publishedAncestor.commit) {
+        fail("Published recovery checkpoint does not match its configured local tag.");
+      }
+      await reconcileConfiguredAncestor({
+        latestPublished,
+        manifestEntry: publishedAncestor,
+        mergedReleaseTags,
+        workflowCommit,
+      });
+      setHandled(false);
+      return;
+    }
+  }
+
   if (releaseTags.length === 0) {
     setHandled(false);
     return;
@@ -654,120 +1221,19 @@ async function main() {
   if (releaseTags.length !== 1) {
     fail("Expected at most one semantic-version tag on the release source commit.");
   }
-  [currentTag] = releaseTags;
-  const version = currentTag.slice(1);
-  const remoteTag = resolveRemoteTag(currentTag);
-  if (git("rev-list", "-n", "1", currentTag) !== expectedCommit || remoteTag !== expectedCommit) {
-    fail("The local and remote release tags do not both resolve to GITHUB_SHA.");
-  }
-  parseSemanticReleaseNote(currentTag);
-
-  const currentOrNewerTags = mergedReleaseTags.filter(
-    (tag) => !semver.lt(tag.slice(1), version),
-  );
-  if (currentOrNewerTags.length !== 1 || currentOrNewerTags[0] !== currentTag) {
-    fail("Additional semantic-version tags make release provenance ambiguous.");
-  }
-  const previousTags = mergedReleaseTags
-    .filter((tag) => semver.lt(tag.slice(1), version))
-    .sort((first, second) => semver.rcompare(first.slice(1), second.slice(1)));
-  if (previousTags.length === 0) {
-    fail(`Could not resolve the previous stable release before ${currentTag}.`);
-  }
-  const [previousTag] = previousTags;
-  const previousRemoteTag = resolveRemoteTag(previousTag);
-  if (git("rev-list", "-n", "1", previousTag) !== previousRemoteTag) {
-    fail("The previous release tag has inconsistent local and remote provenance.");
-  }
-  const result = await analyzeAndGenerate(previousTag, currentTag, expectedCommit);
-  expectedBody = releaseBody(result.version, result.notes);
-
-  const existingRelease = releaseApiOrNull(
-    `repositories/${TRUSTED_REPOSITORY_ID}/releases/tags/${currentTag}`,
-  );
-  if (existingRelease && existingRelease.draft === false) {
-    if (!isAlreadyPublishedRelease(
-      existingRelease,
-      currentTag,
-      version,
-      expectedCommit,
-      expectedBody,
-    )) {
-      fail(`Published release ${currentTag} does not satisfy the release contract.`);
-    }
-    run(path.join(repositoryRoot, "scripts", "verify-published-release.sh"), [
-      version,
-      expectedCommit,
-    ], { stdio: "inherit" });
-    setHandled(true);
-    return;
-  }
-
-  if (latestPublished.tag_name !== previousTag) {
-    fail("The previous semantic-version tag is not GitHub's latest stable release.");
-  }
-
-  const drafts = ghApi(
-    `repositories/${TRUSTED_REPOSITORY_ID}/releases?per_page=100`,
-  ).filter((release) => release.tag_name === currentTag);
-  if (drafts.length > 1) {
-    fail(`Multiple GitHub releases use tag ${currentTag}.`);
-  }
-  if (existingRelease && !drafts.some(({ id }) => id === existingRelease.id)) {
-    fail(`The API returned inconsistent release state for ${currentTag}.`);
-  }
-  let draft = drafts[0];
-  if (draft && !matchingDraftMetadata(
-    draft,
-    currentTag,
-    result.version,
-    expectedCommit,
-    expectedBody,
-  )) {
-    fail(`Existing draft ${currentTag} does not exactly match the expected release.`);
-  }
-
-  run(path.join(repositoryRoot, "scripts", "package-semantic-release.sh"), [
-    result.version,
-    expectedCommit,
-    "--allow-existing-tag",
-  ], { stdio: "inherit" });
-
-  if (!draft) {
-    draft = ghApi(`repositories/${TRUSTED_REPOSITORY_ID}/releases`, [
-      "--method", "POST",
-      "-f", `tag_name=${currentTag}`,
-      "-f", `target_commitish=${expectedCommit}`,
-      "-f", `name=Tapziq Keyboard ${result.version}`,
-      "-f", `body=${expectedBody}`,
-      "-F", "draft=true",
-      "-F", "prerelease=false",
-      "-f", "make_latest=true",
-    ]);
-    if (!matchingDraftMetadata(
-      draft,
-      currentTag,
-      result.version,
-      expectedCommit,
-      expectedBody,
-    ) || draft.assets.length !== 0) {
-      fail("GitHub did not create the exact expected draft release.");
-    }
-  }
-
-  uploadAssets(draft, result.version);
-  const published = ghApi(`repositories/${TRUSTED_REPOSITORY_ID}/releases/${draft.id}`, [
-    "--method", "PATCH",
-    "-F", "draft=false",
-    "-f", "make_latest=true",
-  ]);
-  if (published.draft !== false || published.tag_name !== currentTag) {
-    fail(`GitHub did not publish ${currentTag}.`);
-  }
-  run(path.join(repositoryRoot, "scripts", "verify-published-release.sh"), [
-    result.version,
-    expectedCommit,
-  ], { stdio: "inherit" });
+  await reconcileTaggedRelease({
+    commit: expectedCommit,
+    latestPublished,
+    mergedReleaseTags,
+    prePublish() {
+      verifyExactTaggedRemoteState(
+        releaseTags[0],
+        expectedCommit,
+        latestPublished.tag_name,
+      );
+    },
+    tag: releaseTags[0],
+  });
   setHandled(true);
 }
 

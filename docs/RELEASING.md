@@ -76,6 +76,17 @@ assets in that mutable draft, uploads the exact fresh asset set, and finishes
 publication. Any other branch advance—or ambiguous tags, notes, drafts, assets,
 or source state—fails closed; published releases are never modified.
 
+A historical tagged ancestor can be recovered only through a temporary exact
+entry in `release/interrupted-release-recoveries.json`. Recovery requires the
+pinned lightweight tag and commit on `main`'s first-parent chain, an exact
+version-only generated release commit, the stable-channel note, unchanged
+source-version state, and no competing newer tag or note. The historical source
+is packaged without its old emulator smoke, then the current workflow's frozen
+smoke script checks that exact APK with the pinned keyboard geometry. The
+workflow restores its original commit before continuing to the next Semantic
+Release. Remove the temporary manifest entry and any exact-SHA commit waiver
+only after the replacement release is publicly verified.
+
 ## GitHub configuration
 
 The `production` environment is restricted to `main` and stores these encrypted

@@ -5,10 +5,17 @@ const test = require("node:test");
 
 const {
   compareStableTags,
+  isAcceptedCommit,
   isConventionalCommit,
+  isTemporarilyWaivedCommit,
   parseGitLog,
   selectLatestStableTag,
 } = require("./verify-conventional-commits.cjs");
+
+const waivedBadgeCommit = {
+  hash: "6c8f38a99dd1debaaf33311c828bf3af139cc869",
+  message: "Add CI badge to README for release verification\n",
+};
 
 test("latest stable tag ignores prereleases and compares numeric components", () => {
   assert.equal(
@@ -47,6 +54,50 @@ test("malformed commit headers are rejected", () => {
   ]) {
     assert.equal(isConventionalCommit(message), false, message);
   }
+});
+
+test("temporary waiver requires the exact commit, header, and release window", () => {
+  assert.equal(
+    isTemporarilyWaivedCommit(waivedBadgeCommit, "v0.1.1"),
+    true,
+  );
+  assert.equal(
+    isTemporarilyWaivedCommit({
+      ...waivedBadgeCommit,
+      hash: waivedBadgeCommit.hash.slice(0, 12),
+    }, "v0.1.1"),
+    false,
+  );
+  assert.equal(
+    isTemporarilyWaivedCommit({
+      ...waivedBadgeCommit,
+      hash: "f".repeat(40),
+    }, "v0.1.1"),
+    false,
+  );
+  assert.equal(
+    isTemporarilyWaivedCommit({
+      ...waivedBadgeCommit,
+      message: "Add a different badge to README\n",
+    }, "v0.1.1"),
+    false,
+  );
+  assert.equal(
+    isTemporarilyWaivedCommit(waivedBadgeCommit, "v0.2.0"),
+    false,
+  );
+});
+
+test("accepted commits include normal Conventional Commits", () => {
+  assert.equal(isAcceptedCommit(waivedBadgeCommit, "v0.1.1"), true);
+  assert.equal(isAcceptedCommit({
+    hash: "f".repeat(40),
+    message: "ci(release): recover automated releases\n",
+  }, "v0.1.1"), true);
+  assert.equal(isAcceptedCommit({
+    ...waivedBadgeCommit,
+    hash: "f".repeat(40),
+  }, "v0.1.1"), false);
 });
 
 test("NUL-delimited Git log records preserve multiline messages", () => {
