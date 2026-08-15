@@ -8,9 +8,15 @@ const { pathToFileURL } = require("node:url");
 const path = require("node:path");
 const process = require("node:process");
 const semver = require("semver");
+const {
+  sourceWithVersion,
+  verifySourceVersion,
+} = require("./prepare-release-version.cjs");
 
 const TRUSTED_REPOSITORY_ID = "1332440403";
 const TAG_PATTERN = /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+const RELEASE_COMMIT_PATTERN =
+  /^chore\(release\): ((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)) \[skip ci\]$/;
 const RELEASE_ASSETS = (version) => [
   {
     name: `Tapziq-v${version}.apk`,
@@ -455,6 +461,86 @@ let currentTag;
 let expectedCommit;
 let expectedBody;
 
+function checkoutRemoteReleaseCommit(workflowCommit, remoteCommit) {
+  const recoveryRef = "refs/remotes/tapziq-release/main";
+  git(
+    "fetch",
+    "--force",
+    "--no-tags",
+    repositoryUrl,
+    `+refs/heads/main:${recoveryRef}`,
+  );
+  if (git("rev-parse", "--verify", recoveryRef) !== remoteCommit) {
+    fail("Fetched main does not match the advertised remote main commit.");
+  }
+
+  const commitRecord = git("rev-list", "--parents", "-n", "1", remoteCommit)
+    .split(/\s+/);
+  if (
+    commitRecord.length !== 2
+    || commitRecord[0] !== remoteCommit
+    || commitRecord[1] !== workflowCommit
+  ) {
+    fail("Remote main advanced beyond GITHUB_SHA without one direct release commit.");
+  }
+  const subject = git("show", "-s", "--format=%s", remoteCommit);
+  const subjectMatch = RELEASE_COMMIT_PATTERN.exec(subject);
+  if (subjectMatch === null) {
+    fail("Remote main advanced beyond GITHUB_SHA with a non-release commit.");
+  }
+  const changedPaths = git(
+    "diff-tree",
+    "--no-commit-id",
+    "--name-only",
+    "-r",
+    workflowCommit,
+    remoteCommit,
+  ).split("\n").filter(Boolean);
+  if (
+    changedPaths.length !== 1
+    || changedPaths[0] !== "app/build.gradle.kts"
+  ) {
+    fail("The generated release commit changed files outside source version metadata.");
+  }
+  try {
+    verifySourceVersion(subjectMatch[1], {
+      repositoryRoot,
+      ref: remoteCommit,
+    });
+    const parentSource = execFileSync(
+      "git",
+      ["show", `${workflowCommit}:app/build.gradle.kts`],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const releaseSource = execFileSync(
+      "git",
+      ["show", `${remoteCommit}:app/build.gradle.kts`],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    if (releaseSource !== sourceWithVersion(parentSource, subjectMatch[1])) {
+      fail("The generated release commit changed non-version Gradle metadata.");
+    }
+  } catch (error) {
+    fail(`The generated release commit has invalid source metadata: ${error.message}`);
+  }
+
+  git("checkout", "--detach", remoteCommit);
+  if (git("status", "--porcelain", "--untracked-files=normal") !== "") {
+    fail("Checking out the generated release commit produced a dirty worktree.");
+  }
+  process.stdout.write(
+    `Recovered generated source-version commit ${remoteCommit}.\n`,
+  );
+}
+
 async function main() {
   if (process.env.GITHUB_REF !== "refs/heads/main") {
     fail("Interrupted release reconciliation is restricted to main.");
@@ -462,11 +548,11 @@ async function main() {
   if (process.env.GITHUB_REPOSITORY_ID !== TRUSTED_REPOSITORY_ID) {
     fail("Interrupted release reconciliation is restricted to the trusted Tapziq repository.");
   }
-  expectedCommit = (process.env.GITHUB_SHA || "").toLowerCase();
-  if (!/^[0-9a-f]{40}$/.test(expectedCommit)) {
+  const workflowCommit = (process.env.GITHUB_SHA || "").toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(workflowCommit)) {
     fail("GITHUB_SHA must be a full Git commit SHA.");
   }
-  if (git("rev-parse", "HEAD") !== expectedCommit) {
+  if (git("rev-parse", "HEAD") !== workflowCommit) {
     fail("The checkout does not match GITHUB_SHA.");
   }
   if (git("status", "--porcelain", "--untracked-files=normal") !== "") {
@@ -504,8 +590,10 @@ async function main() {
     git("ls-remote", repositoryUrl, "refs/heads/main"),
     "refs/heads/main",
   );
-  if (remoteHead !== expectedCommit) {
-    fail("Remote main no longer matches the release source commit.");
+  expectedCommit = workflowCommit;
+  if (remoteHead !== workflowCommit) {
+    checkoutRemoteReleaseCommit(workflowCommit, remoteHead);
+    expectedCommit = remoteHead;
   }
 
   const latestPublished = ghApi(

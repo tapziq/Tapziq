@@ -118,6 +118,8 @@ remote_tag_commit="$(
 )"
 [[ "$remote_tag_commit" == "$expected_source_commit" ]] || \
   fail "Remote release tag does not resolve to the expected source commit."
+node "$script_dir/prepare-release-version.cjs" \
+  check "$release_version" "$expected_source_commit"
 latest_tag="$(
   gh api "repositories/$trusted_repository_id/releases/latest" --jq .tag_name
 )"

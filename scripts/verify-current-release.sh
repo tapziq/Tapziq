@@ -8,9 +8,16 @@ fail() {
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd)"
-expected_commit="${GITHUB_SHA:-$(git -C "$repo_root" rev-parse HEAD)}"
+expected_commit="$(git -C "$repo_root" rev-parse HEAD)"
 [[ "$expected_commit" =~ ^[0-9a-f]{40}$ ]] || \
   fail "The current release commit must be a full Git SHA."
+workflow_commit="${GITHUB_SHA:-$expected_commit}"
+[[ "$workflow_commit" =~ ^[0-9a-f]{40}$ ]] || \
+  fail "GITHUB_SHA must be a full Git SHA."
+if [[ "$workflow_commit" != "$expected_commit" ]]; then
+  [[ "$(git -C "$repo_root" rev-parse "$expected_commit^")" == "$workflow_commit" ]] || \
+    fail "The release commit must directly follow GITHUB_SHA."
+fi
 
 release_tags="$(
   git -C "$repo_root" tag --points-at "$expected_commit" \

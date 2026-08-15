@@ -18,6 +18,7 @@ const test = require("node:test");
 const repositoryRoot = path.resolve(__dirname, "..");
 const trustedRepositoryId = "1332440403";
 const trustedRepository = "tapziq/Tapziq";
+const { sourceWithVersion } = require("./prepare-release-version.cjs");
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -35,7 +36,12 @@ function git(cwd, ...args) {
   return run("git", args, { cwd });
 }
 
-function createFixture({ fullReconcile = false, releaseCommit = false, withTag = false } = {}) {
+function createFixture({
+  fullReconcile = false,
+  generatedReleaseCommit = false,
+  releaseCommit = false,
+  withTag = false,
+} = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "tapziq-reconcile-test."));
   const work = path.join(root, "work");
   const remote = path.join(root, "remote.git");
@@ -47,6 +53,8 @@ function createFixture({ fullReconcile = false, releaseCommit = false, withTag =
       return relative === ""
         || relative === "package.json"
         || relative === "release.config.cjs"
+        || relative === "app"
+        || relative === "app/build.gradle.kts"
         || relative === "scripts"
         || relative.startsWith(`scripts${path.sep}`);
     },
@@ -98,6 +106,20 @@ printf '%s\n' "$*" > "$TAPZIQ_TEST_VERIFY_RECORD"
     git(work, "add", "fixture.txt");
     git(work, "commit", "-m", "feat: recover this release");
   }
+  const workflowHead = git(work, "rev-parse", "HEAD");
+  if (generatedReleaseCommit) {
+    if (!releaseCommit) {
+      throw new Error("A generated release commit requires a product commit.");
+    }
+    const sourcePath = path.join(work, "app", "build.gradle.kts");
+    writeFileSync(
+      sourcePath,
+      sourceWithVersion(readFileSync(sourcePath, "utf8"), "0.2.0"),
+    );
+    git(work, "add", "app/build.gradle.kts");
+    git(work, "commit", "-m", "chore(release): 0.2.0 [skip ci]");
+  }
+  const releaseHead = git(work, "rev-parse", "HEAD");
   if (withTag) {
     git(work, "tag", "v0.2.0");
     git(work, "notes", "--ref", "semantic-release-v0.2.0", "add", "-m", '{"channels":[null]}', "v0.2.0");
@@ -106,6 +128,9 @@ printf '%s\n' "$*" > "$TAPZIQ_TEST_VERIFY_RECORD"
   git(work, "push", "origin", "main", "--tags");
   if (withTag) {
     git(work, "push", "origin", "refs/notes/semantic-release-v0.2.0");
+  }
+  if (generatedReleaseCommit) {
+    git(work, "checkout", "--detach", workflowHead);
   }
   require("node:fs").mkdirSync(bin);
   const gh = path.join(bin, "gh");
@@ -223,7 +248,8 @@ if (endpoint === "repositories/${trustedRepositoryId}") {
     work,
     remote,
     bin,
-    head: git(work, "rev-parse", "HEAD"),
+    head: workflowHead,
+    releaseHead,
     baseline: git(work, "rev-list", "-n", "1", "v0.1.0"),
   };
 }
@@ -264,6 +290,61 @@ test("no release tag reports handled=false without mutating GitHub", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.output, "handled=false\n");
     assert.match(result.stdout, /^handled=false$/m);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("a generated source-version commit is recovered before a tag exists", () => {
+  const fixture = createFixture({
+    generatedReleaseCommit: true,
+    releaseCommit: true,
+  });
+  try {
+    const result = runHelper(fixture);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.output, "handled=false\n");
+    assert.match(result.stdout, /Recovered generated source-version commit/);
+    assert.equal(git(fixture.work, "rev-parse", "HEAD"), fixture.releaseHead);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("an unrelated remote-main advance is not treated as a release commit", () => {
+  const fixture = createFixture({ releaseCommit: true });
+  try {
+    writeFileSync(path.join(fixture.work, "fixture.txt"), "baseline\nfeature\nunrelated\n");
+    git(fixture.work, "add", "fixture.txt");
+    git(fixture.work, "commit", "-m", "ci: unrelated branch advance");
+    git(fixture.work, "push", "origin", "main");
+    git(fixture.work, "checkout", "--detach", fixture.head);
+
+    const result = runHelper(fixture);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /advanced beyond GITHUB_SHA with a non-release commit/);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("a release-shaped commit cannot hide other Gradle changes", () => {
+  const fixture = createFixture({ releaseCommit: true });
+  try {
+    const sourcePath = path.join(fixture.work, "app", "build.gradle.kts");
+    writeFileSync(
+      sourcePath,
+      sourceWithVersion(readFileSync(sourcePath, "utf8"), "0.2.0")
+        + "\n// unexpected release-time change\n",
+    );
+    git(fixture.work, "add", "app/build.gradle.kts");
+    git(fixture.work, "commit", "-m", "chore(release): 0.2.0 [skip ci]");
+    git(fixture.work, "push", "origin", "main");
+    git(fixture.work, "checkout", "--detach", fixture.head);
+
+    const result = runHelper(fixture);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /changed non-version Gradle metadata/);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -340,6 +421,7 @@ test("a future semantic-release note without its tag fails closed", () => {
 test("an exact orphan tag resumes a matching partial draft and publishes once", () => {
   const fixture = createFixture({
     fullReconcile: true,
+    generatedReleaseCommit: true,
     releaseCommit: true,
     withTag: true,
   });
@@ -358,6 +440,7 @@ test("an exact orphan tag resumes a matching partial draft and publishes once", 
 
     rmSync(path.join(fixture.work, "dist"), { recursive: true, force: true });
     rmSync(path.join(fixture.root, "github-output"), { force: true });
+    git(fixture.work, "checkout", "--detach", fixture.head);
     const result = runHelper(fixture, {
       TAPZIQ_TEST_APK_CONTENT: "rebuilt production apk",
       TAPZIQ_TEST_RECONCILE: "1",
@@ -366,11 +449,11 @@ test("an exact orphan tag resumes a matching partial draft and publishes once", 
     assert.equal(result.output, "handled=true\n");
     assert.equal(
       readFileSync(path.join(fixture.root, "package-record"), "utf8"),
-      `0.2.0 ${fixture.head} --allow-existing-tag\n`,
+      `0.2.0 ${fixture.releaseHead} --allow-existing-tag\n`,
     );
     assert.equal(
       readFileSync(path.join(fixture.root, "verify-record"), "utf8"),
-      `0.2.0 ${fixture.head}\n`,
+      `0.2.0 ${fixture.releaseHead}\n`,
     );
     const state = JSON.parse(readFileSync(path.join(fixture.root, "gh-state.json"), "utf8"));
     assert.equal(state.published, true);
@@ -390,6 +473,7 @@ test("an exact orphan tag resumes a matching partial draft and publishes once", 
     rmSync(path.join(fixture.work, "dist"), { recursive: true, force: true });
     rmSync(path.join(fixture.root, "github-output"), { force: true });
     rmSync(path.join(fixture.root, "package-record"), { force: true });
+    git(fixture.work, "checkout", "--detach", fixture.head);
     const rerun = runHelper(fixture, { TAPZIQ_TEST_RECONCILE: "1" });
     assert.equal(rerun.status, 0, rerun.stderr);
     assert.equal(rerun.output, "handled=true\n");

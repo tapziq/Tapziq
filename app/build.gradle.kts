@@ -4,11 +4,13 @@ plugins {
 
 val tapziqVersionNameProperty = providers.gradleProperty("tapziqVersionName")
 val tapziqVersionCodeProperty = providers.gradleProperty("tapziqVersionCode")
-val configuredVersionName = tapziqVersionNameProperty.orElse("0.1.0")
+val tapziqSourceVersionName = "0.1.0"
+val tapziqSourceVersionCode = 1
+val configuredVersionName = tapziqVersionNameProperty.orElse(tapziqSourceVersionName)
 val configuredVersionCode = tapziqVersionCodeProperty.map { rawVersionCode ->
     rawVersionCode.toIntOrNull()
         ?: throw GradleException("tapziqVersionCode must be a positive integer.")
-}.orElse(1)
+}.orElse(tapziqSourceVersionCode)
 
 val releaseSigningVariables = mapOf(
     "TAPZIQ_RELEASE_STORE_FILE" to providers.environmentVariable("TAPZIQ_RELEASE_STORE_FILE"),
@@ -116,6 +118,15 @@ val verifyReleaseSigning by tasks.registering {
             )
         if (!Regex("^[1-9][0-9]*$").matches(versionCodeText)) {
             throw GradleException("tapziqVersionCode must be a positive integer.")
+        }
+        if (
+            versionName != tapziqSourceVersionName ||
+            versionCodeText.toLongOrNull() != tapziqSourceVersionCode.toLong()
+        ) {
+            throw GradleException(
+                "Production release version inputs must match the committed " +
+                    "Tapziq source version."
+            )
         }
 
         val major = versionMatch.groupValues[1].toLongOrNull()
