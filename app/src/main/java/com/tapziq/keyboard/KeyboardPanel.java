@@ -7,6 +7,7 @@ import android.graphics.Insets;
 import android.graphics.Typeface;
 import android.os.Build;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.Button;
@@ -154,7 +155,7 @@ final class KeyboardPanel extends LinearLayout {
                 button.setStateListAnimator(null);
                 button.setBackgroundResource(backgroundFor(key, shifted));
                 button.setContentDescription(descriptionFor(key));
-                button.setOnClickListener(view -> listener.onKey(key));
+                setHapticClickListener(button, () -> listener.onKey(key));
                 row.addView(button, params);
             }
         }
@@ -189,15 +190,22 @@ final class KeyboardPanel extends LinearLayout {
         bar.addView(scroller, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1f));
 
         applyButton = compactButton("Apply", "Apply proofreading suggestion");
-        applyButton.setOnClickListener(view -> listener.onApplyProofread());
+        setHapticClickListener(applyButton, listener::onApplyProofread);
         bar.addView(applyButton, new LayoutParams(dp(72), LayoutParams.MATCH_PARENT));
 
         dismissButton = compactButton("×", "Dismiss proofreading suggestion");
-        dismissButton.setOnClickListener(view -> listener.onDismissProofread());
+        setHapticClickListener(dismissButton, listener::onDismissProofread);
         LinearLayout.LayoutParams dismissParams = new LayoutParams(dp(46), LayoutParams.MATCH_PARENT);
         dismissParams.leftMargin = dp(4);
         bar.addView(dismissButton, dismissParams);
         return bar;
+    }
+
+    private void setHapticClickListener(View view, Runnable action) {
+        view.setOnClickListener(clickedView -> {
+            clickedView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            action.run();
+        });
     }
 
     private void restoreProofreadBar() {
