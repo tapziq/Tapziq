@@ -154,19 +154,32 @@ display_density="$(
 )"
 [[ "$display_density" =~ ^[1-9][0-9]*$ ]] || \
   fail "Could not determine the emulator display density."
+display_dimensions="$(
+  adb shell dumpsys window displays | tr -d '\r' \
+    | sed -n 's/.* cur=\([0-9][0-9]*\)x\([0-9][0-9]*\) .*/\1 \2/p' \
+    | head -n 1
+)"
+[[ "$display_dimensions" =~ ^([1-9][0-9]*)\ ([1-9][0-9]*)$ ]] || \
+  fail "Could not determine the current display orientation."
+display_width="${BASH_REMATCH[1]}"
+display_height="${BASH_REMATCH[2]}"
 ime_width=$((ime_right - ime_left))
 ime_height=$((ime_bottom - ime_top))
 ((ime_width > 0 && ime_height > 0)) || \
   fail "Tapziq's input-method window has invalid bounds."
 panel_padding=$(((2 * display_density + 80) / 160))
 top_padding=$(((4 * display_density + 80) / 160))
-if ((ime_width < ime_height)); then
-  row_height=$(((44 * display_density + 80) / 160))
+if ((display_width > display_height)); then
+  row_height=$(((40 * display_density + 80) / 160))
 else
-  row_height=$(((52 * display_density + 80) / 160))
+  row_height=$(((48 * display_density + 80) / 160))
 fi
 key_x=$((ime_left + panel_padding + (ime_width - 2 * panel_padding) / 20))
-key_y=$((ime_top + top_padding + row_height / 2))
+# Ordinary prose fields now have a full-width Proofread row before QWERTY.
+# Tap the center of the q key in the following row, preserving a real IME tap.
+proofread_rows_before_letters=1
+key_y=$((ime_top + top_padding \
+  + proofread_rows_before_letters * row_height + row_height / 2))
 adb shell input tap "$key_x" "$key_y"
 sleep 1
 dump_ui

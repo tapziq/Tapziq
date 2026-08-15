@@ -47,4 +47,33 @@ public final class EditorBehaviorTest {
         assertFalse(EditorBehavior.isMultiline(InputType.TYPE_CLASS_TEXT));
         assertFalse(EditorBehavior.isMultiline(InputType.TYPE_CLASS_NUMBER));
     }
+
+    @Test
+    public void proofreadingRejectsSecureAndNonProseFields() {
+        assertTrue(EditorBehavior.supportsProofreadingInputType(InputType.TYPE_CLASS_TEXT));
+        assertFalse(EditorBehavior.supportsProofreadingInputType(
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD
+        ));
+        assertFalse(EditorBehavior.supportsProofreadingInputType(
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
+        ));
+        assertFalse(EditorBehavior.supportsProofreadingInputType(
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+        ));
+        assertFalse(EditorBehavior.supportsProofreadingInputType(
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+        ));
+        assertFalse(EditorBehavior.supportsProofreadingInputType(
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PERSON_NAME
+        ));
+        assertFalse(EditorBehavior.supportsProofreadingInputType(
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        ));
+        assertFalse(EditorBehavior.supportsProofreadingInputType(InputType.TYPE_CLASS_NUMBER));
+
+        EditorInfo privateEditor = new EditorInfo();
+        privateEditor.inputType = InputType.TYPE_CLASS_TEXT;
+        privateEditor.imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING;
+        assertFalse(EditorBehavior.supportsProofreading(privateEditor));
+    }
 }

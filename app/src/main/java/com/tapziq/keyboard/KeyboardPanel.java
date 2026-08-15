@@ -10,7 +10,9 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.Button;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import java.util.List;
 
@@ -18,9 +20,20 @@ import java.util.List;
 final class KeyboardPanel extends LinearLayout {
     interface Listener {
         void onKey(KeyboardLayouts.KeySpec key);
+
+        void onApplyProofread();
+
+        void onDismissProofread();
     }
 
     private final Listener listener;
+    private LinearLayout suggestionBar;
+    private TextView suggestionText;
+    private Button applyButton;
+    private Button dismissButton;
+    private String visibleProofreadText;
+    private boolean visibleSuggestion;
+    private boolean visibleDismiss;
 
     KeyboardPanel(Context context, Listener listener) {
         super(context);
@@ -35,19 +48,76 @@ final class KeyboardPanel extends LinearLayout {
         });
     }
 
+    void showSuggestion(String suggestion) {
+        visibleProofreadText = suggestion;
+        visibleSuggestion = true;
+        visibleDismiss = true;
+        if (suggestionBar == null || suggestionText == null
+                || applyButton == null || dismissButton == null) {
+            return;
+        }
+        setProofreadBarVisible(true);
+        suggestionText.setText(suggestion);
+        suggestionText.setTextColor(getContext().getColor(R.color.key_text));
+        suggestionText.setContentDescription("Proofreading suggestion: " + suggestion);
+        applyButton.setVisibility(VISIBLE);
+        applyButton.setEnabled(true);
+        dismissButton.setVisibility(VISIBLE);
+    }
+
+    void showProofreadMessage(String message, boolean showDismiss) {
+        visibleProofreadText = message;
+        visibleSuggestion = false;
+        visibleDismiss = showDismiss;
+        if (suggestionBar == null || suggestionText == null
+                || applyButton == null || dismissButton == null) {
+            return;
+        }
+        setProofreadBarVisible(true);
+        suggestionText.setText(message);
+        suggestionText.setTextColor(getContext().getColor(R.color.key_text));
+        suggestionText.setContentDescription(message);
+        applyButton.setVisibility(GONE);
+        applyButton.setEnabled(false);
+        dismissButton.setVisibility(showDismiss ? VISIBLE : GONE);
+    }
+
+    void hideProofreadMessage() {
+        visibleProofreadText = null;
+        visibleSuggestion = false;
+        visibleDismiss = false;
+        if (suggestionBar != null) {
+            setProofreadBarVisible(false);
+        }
+    }
+
     void render(
             KeyboardLayouts.Mode mode,
             boolean shifted,
             boolean offerImeSwitch,
-            String enterLabel
+            String enterLabel,
+            boolean offerProofread
     ) {
         removeAllViews();
+        suggestionBar = createSuggestionBar();
+        if (visibleProofreadText != null) {
+            addView(suggestionBar, new LayoutParams(LayoutParams.MATCH_PARENT, dp(48)));
+        } else {
+            addView(suggestionBar, new LayoutParams(LayoutParams.MATCH_PARENT, 0));
+        }
+        restoreProofreadBar();
         List<List<KeyboardLayouts.KeySpec>> rows =
-                KeyboardLayouts.rows(mode, shifted, offerImeSwitch, enterLabel);
+                KeyboardLayouts.rows(
+                        mode,
+                        shifted,
+                        offerImeSwitch,
+                        enterLabel,
+                        offerProofread
+                );
 
         boolean landscape = getResources().getConfiguration().orientation
                 == Configuration.ORIENTATION_LANDSCAPE;
-        int rowHeight = dp(landscape ? 44 : 52);
+        int rowHeight = dp(landscape ? 40 : 48);
 
         for (List<KeyboardLayouts.KeySpec> keys : rows) {
             LinearLayout row = new LinearLayout(getContext());
@@ -99,6 +169,85 @@ final class KeyboardPanel extends LinearLayout {
                 : R.drawable.key_background;
     }
 
+    private LinearLayout createSuggestionBar() {
+        LinearLayout bar = new LinearLayout(getContext());
+        bar.setOrientation(HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(4), dp(3), dp(4), dp(3));
+
+        HorizontalScrollView scroller = new HorizontalScrollView(getContext());
+        scroller.setHorizontalScrollBarEnabled(false);
+        suggestionText = new TextView(getContext());
+        suggestionText.setTextSize(15f);
+        suggestionText.setGravity(Gravity.CENTER_VERTICAL);
+        suggestionText.setPadding(dp(10), 0, dp(10), 0);
+        suggestionText.setSingleLine(true);
+        scroller.addView(suggestionText, new HorizontalScrollView.LayoutParams(
+                LayoutParams.WRAP_CONTENT,
+                LayoutParams.MATCH_PARENT
+        ));
+        bar.addView(scroller, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1f));
+
+        applyButton = compactButton("Apply", "Apply proofreading suggestion");
+        applyButton.setOnClickListener(view -> listener.onApplyProofread());
+        bar.addView(applyButton, new LayoutParams(dp(72), LayoutParams.MATCH_PARENT));
+
+        dismissButton = compactButton("×", "Dismiss proofreading suggestion");
+        dismissButton.setOnClickListener(view -> listener.onDismissProofread());
+        LinearLayout.LayoutParams dismissParams = new LayoutParams(dp(46), LayoutParams.MATCH_PARENT);
+        dismissParams.leftMargin = dp(4);
+        bar.addView(dismissButton, dismissParams);
+        return bar;
+    }
+
+    private void restoreProofreadBar() {
+        if (visibleProofreadText == null) {
+            setProofreadBarVisible(false);
+            return;
+        }
+        setProofreadBarVisible(true);
+        suggestionText.setText(visibleProofreadText);
+        suggestionText.setTextColor(getContext().getColor(R.color.key_text));
+        suggestionText.setContentDescription(
+                visibleSuggestion
+                        ? "Proofreading suggestion: " + visibleProofreadText
+                        : visibleProofreadText
+        );
+        applyButton.setVisibility(visibleSuggestion ? VISIBLE : GONE);
+        applyButton.setEnabled(visibleSuggestion);
+        dismissButton.setVisibility(visibleDismiss ? VISIBLE : GONE);
+    }
+
+    private void setProofreadBarVisible(boolean visible) {
+        if (suggestionBar == null) {
+            return;
+        }
+        LayoutParams params = (LayoutParams) suggestionBar.getLayoutParams();
+        if (params != null) {
+            params.height = visible ? dp(48) : 0;
+            suggestionBar.setLayoutParams(params);
+        }
+        suggestionBar.setVisibility(visible ? VISIBLE : GONE);
+        suggestionBar.requestLayout();
+    }
+
+    private Button compactButton(String label, String description) {
+        Button button = new Button(getContext());
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(label.length() > 1 ? 13f : 20f);
+        button.setTextColor(getContext().getColor(R.color.key_text));
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setMinHeight(0);
+        button.setMinimumHeight(0);
+        button.setPadding(0, 0, 0, 0);
+        button.setStateListAnimator(null);
+        button.setBackgroundResource(R.drawable.key_special_background);
+        button.setContentDescription(description);
+        return button;
+    }
+
     private String descriptionFor(KeyboardLayouts.KeySpec key) {
         switch (key.action) {
             case SHIFT:
@@ -117,6 +266,8 @@ final class KeyboardPanel extends LinearLayout {
                 return "More symbols";
             case NEXT_IME:
                 return "Switch keyboard";
+            case PROOFREAD:
+                return "Proofread with on-device Gemini Nano";
             case TEXT:
             default:
                 return key.label;

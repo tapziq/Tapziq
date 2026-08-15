@@ -77,6 +77,7 @@ android {
 }
 
 dependencies {
+    implementation("com.google.mlkit:genai-proofreading:1.0.0-beta1")
     testImplementation("junit:junit:4.13.2")
 }
 

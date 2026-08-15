@@ -45,6 +45,10 @@ const sourceBuildScript = readFileSync(
   path.join(repositoryRoot, "app", "build.gradle.kts"),
   "utf8",
 );
+const versionFixtureSourceBuildScript = sourceWithVersion(
+  sourceBuildScript,
+  "0.1.0",
+);
 const publishedVerifierScript = readFileSync(
   path.join(repositoryRoot, "scripts", "verify-published-release.sh"),
   "utf8",
@@ -378,7 +382,7 @@ function createVersionFixture() {
   mkdirSync(path.join(fixtureRepository, "app"), { recursive: true });
   writeFileSync(
     path.join(fixtureRepository, "app", "build.gradle.kts"),
-    sourceBuildScript,
+    versionFixtureSourceBuildScript,
   );
   writeFileSync(path.join(fixtureRepository, "product.txt"), "baseline\n");
   execFileSync("git", ["init", "-b", "main"], { cwd: fixtureRepository });
@@ -458,14 +462,17 @@ test("source version preparation rejects dirty or malformed state", (t) => {
   );
   assert.throws(
     () => sourceMetadata(
-      sourceBuildScript
+      versionFixtureSourceBuildScript
         + '\nval tapziqSourceVersionName = "9.9.9"\n',
     ),
     /exactly one tapziqSourceVersionName declaration/,
   );
   assert.throws(
     () => sourceMetadata(
-      sourceBuildScript.replace("tapziqSourceVersionCode = 1", "tapziqSourceVersionCode = 2"),
+      versionFixtureSourceBuildScript.replace(
+        "tapziqSourceVersionCode = 1",
+        "tapziqSourceVersionCode = 2",
+      ),
     ),
     /requires Android versionCode 1, not 2/,
   );
@@ -650,6 +657,21 @@ test("APK verification accepts portable SHA-256 tools and requires unzip", () =>
   assert.match(apkVerifierScript, /apk_sha256="\$\(shasum -a 256/);
 });
 
+test("APK verification enforces the complete Gemini Nano permission contract", () => {
+  assert.match(apkVerifierScript, /android\.permission\.ACCESS_NETWORK_STATE/);
+  assert.match(apkVerifierScript, /android\.permission\.INTERNET/);
+  assert.match(
+    apkVerifierScript,
+    /com\.google\.android\.apps\.aicore\.service\.BIND_SERVICE/,
+  );
+  assert.match(
+    apkVerifierScript,
+    /com\.tapziq\.keyboard\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION/,
+  );
+  assert.match(apkVerifierScript, /actual_permissions/);
+  assert.match(apkVerifierScript, /expected_permissions/);
+});
+
 test("production smoke test installs and types through the selected IME", () => {
   assert.match(emulatorSmokeScript, /adb uninstall "\$package_name"/);
   assert.match(emulatorSmokeScript, /adb install --no-streaming/);
@@ -661,6 +683,7 @@ test("production smoke test installs and types through the selected IME", () => 
   assert.match(emulatorSmokeScript, /android:id\/aerr_wait/);
   assert.match(emulatorSmokeScript, /dumpsys window windows/);
   assert.match(emulatorSmokeScript, /adb shell input tap "\$key_x" "\$key_y"/);
+  assert.match(emulatorSmokeScript, /proofread_rows_before_letters=1/);
   assert.match(emulatorSmokeScript, /typed_text/);
 });
 
@@ -674,12 +697,15 @@ test("workflow keeps secrets out of PR verification and uses safe token scopes",
   assert.match(workflow, /environment: production/);
   assert.equal((workflow.match(/fetch-depth: 0/g) || []).length, 2);
   assert.equal((workflow.match(/persist-credentials: false/g) || []).length, 2);
+  assert.equal((workflow.match(/- name: Set up JDK 21/g) || []).length, 2);
+  assert.equal((workflow.match(/java-version: "21"/g) || []).length, 2);
+  assert.doesNotMatch(workflow, /Set up JDK 17|java-version: "17"/);
   assert.match(
     workflow,
     /Verify Conventional Commit history\n        run: npm run check:commits/,
   );
   const preflightStep = workflow.match(
-    /      - name: Verify production release controls\n[\s\S]*?(?=\n      - name: Set up JDK 17)/,
+    /      - name: Verify production release controls\n[\s\S]*?(?=\n      - name: Set up JDK 21)/,
   );
   assert(preflightStep);
   assert.doesNotMatch(preflightStep[0], /GH_TOKEN:/);

@@ -96,8 +96,16 @@ if grep -Fq 'application-debuggable' <<< "$badging"; then
   printf 'Release APK is debuggable.\n' >&2
   exit 1
 fi
-if grep -Eq '^uses-permission' <<< "$badging"; then
-  printf 'Release APK unexpectedly requests an Android permission.\n' >&2
+actual_permissions="$(sed -n \
+  "s/^uses-permission: name='\\([^']*\\)'.*/\\1/p" <<< "$badging" | sort -u)"
+expected_permissions="$(printf '%s\n' \
+  android.permission.ACCESS_NETWORK_STATE \
+  android.permission.INTERNET \
+  com.google.android.apps.aicore.service.BIND_SERVICE \
+  com.tapziq.keyboard.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION | sort)"
+if [[ "$actual_permissions" != "$expected_permissions" ]]; then
+  printf 'Unexpected Android permission set.\nExpected:\n%s\nActual:\n%s\n' \
+    "$expected_permissions" "$actual_permissions" >&2
   exit 1
 fi
 
