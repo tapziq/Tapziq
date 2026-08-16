@@ -4,8 +4,8 @@ plugins {
 
 val tapziqVersionNameProperty = providers.gradleProperty("tapziqVersionName")
 val tapziqVersionCodeProperty = providers.gradleProperty("tapziqVersionCode")
-val tapziqSourceVersionName = "0.4.0"
-val tapziqSourceVersionCode = 4000
+val tapziqSourceVersionName = "0.4.1"
+val tapziqSourceVersionCode = 4001
 val configuredVersionName = tapziqVersionNameProperty.orElse(tapziqSourceVersionName)
 val configuredVersionCode = tapziqVersionCodeProperty.map { rawVersionCode ->
     rawVersionCode.toIntOrNull()
