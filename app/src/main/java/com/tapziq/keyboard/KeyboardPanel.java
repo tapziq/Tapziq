@@ -285,7 +285,12 @@ final class KeyboardPanel extends LinearLayout {
         int right;
         int bottom;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            Insets navigation = windowInsets.getInsets(WindowInsets.Type.navigationBars());
+            // Android exposes the IME's dismiss and switcher strip as a caption bar,
+            // which can be taller than the device navigation bar beneath it.
+            Insets navigation = windowInsets.getInsets(
+                    WindowInsets.Type.navigationBars()
+                            | WindowInsets.Type.captionBar()
+            );
             left = navigation.left;
             right = navigation.right;
             bottom = navigation.bottom;
