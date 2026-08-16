@@ -5,6 +5,8 @@ import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Insets;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.InsetDrawable;
 import android.os.Build;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
@@ -19,6 +21,9 @@ import java.util.List;
 
 @SuppressLint("ViewConstructor")
 final class KeyboardPanel extends LinearLayout {
+    private static final int KEY_HORIZONTAL_GUTTER_DP = 2;
+    private static final int KEY_VERTICAL_GUTTER_DP = 3;
+
     interface Listener {
         void onKey(KeyboardLayouts.KeySpec key);
 
@@ -117,7 +122,6 @@ final class KeyboardPanel extends LinearLayout {
             for (KeyboardLayouts.KeySpec key : keys) {
                 LinearLayout.LayoutParams params =
                         new LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, key.weight);
-                params.setMargins(dp(2), dp(3), dp(2), dp(3));
 
                 if (key.action == KeyboardLayouts.Action.SPACER) {
                     row.addView(new View(getContext()), params);
@@ -141,7 +145,7 @@ final class KeyboardPanel extends LinearLayout {
                 button.setMinimumHeight(0);
                 button.setPadding(0, 0, 0, 0);
                 button.setStateListAnimator(null);
-                button.setBackgroundResource(backgroundFor(key, shifted));
+                setKeyBackground(button, key, shifted);
                 button.setContentDescription(descriptionFor(key));
                 setHapticClickListener(button, () -> listener.onKey(key));
                 row.addView(button, params);
@@ -156,6 +160,29 @@ final class KeyboardPanel extends LinearLayout {
         return key.isSpecial()
                 ? R.drawable.key_special_background
                 : R.drawable.key_background;
+    }
+
+    private void setKeyBackground(
+            Button button,
+            KeyboardLayouts.KeySpec key,
+            boolean shifted
+    ) {
+        int backgroundResource = backgroundFor(key, shifted);
+        Drawable background = getContext().getDrawable(backgroundResource);
+        if (background == null) {
+            button.setBackgroundResource(backgroundResource);
+            return;
+        }
+
+        // Keep the visible gutters while allowing every key to receive touches
+        // across its entire layout cell, including the space between key caps.
+        button.setBackground(new InsetDrawable(
+                background,
+                dp(KEY_HORIZONTAL_GUTTER_DP),
+                dp(KEY_VERTICAL_GUTTER_DP),
+                dp(KEY_HORIZONTAL_GUTTER_DP),
+                dp(KEY_VERTICAL_GUTTER_DP)
+        ));
     }
 
     private LinearLayout createSuggestionBar() {
