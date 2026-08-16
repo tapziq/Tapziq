@@ -98,14 +98,38 @@ if grep -Fq 'application-debuggable' <<< "$badging"; then
 fi
 actual_permissions="$(sed -n \
   "s/^uses-permission: name='\\([^']*\\)'.*/\\1/p" <<< "$badging" | sort -u)"
-expected_permissions="$(printf '%s\n' \
-  android.permission.ACCESS_NETWORK_STATE \
-  android.permission.INTERNET \
-  com.google.android.apps.aicore.service.BIND_SERVICE \
-  com.tapziq.keyboard.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION | sort)"
+expected_permissions="android.permission.INTERNET"
 if [[ "$actual_permissions" != "$expected_permissions" ]]; then
   printf 'Unexpected Android permission set.\nExpected:\n%s\nActual:\n%s\n' \
     "$expected_permissions" "$actual_permissions" >&2
+  exit 1
+fi
+
+expected_native_code="native-code: 'arm64-v8a' 'x86_64'"
+actual_native_code="$(grep -m1 '^native-code:' <<< "$badging" || true)"
+if [[ "$actual_native_code" != "$expected_native_code" ]]; then
+  printf 'Unexpected native ABI set.\nExpected: %s\nActual: %s\n' \
+    "$expected_native_code" "$actual_native_code" >&2
+  exit 1
+fi
+
+expected_native_libraries="$({
+  printf '%s\n' \
+    'lib/arm64-v8a/liblitertlm_jni.so' \
+    'lib/x86_64/liblitertlm_jni.so'
+} | sort)"
+actual_native_libraries="$(unzip -Z1 "$apk_path" \
+  | sed -n '/^lib\/.*\.so$/p' \
+  | sort)"
+if [[ "$actual_native_libraries" != "$expected_native_libraries" ]]; then
+  printf 'Unexpected native library set.\nExpected:\n%s\nActual:\n%s\n' \
+    "$expected_native_libraries" "$actual_native_libraries" >&2
+  exit 1
+fi
+
+if ! cmp -s "$repo_root/THIRD_PARTY_NOTICES.md" \
+    <(unzip -p "$apk_path" assets/legal/THIRD_PARTY_NOTICES.md); then
+  printf 'APK third-party notices differ from the audited repository notice.\n' >&2
   exit 1
 fi
 

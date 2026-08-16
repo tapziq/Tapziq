@@ -3,39 +3,73 @@
 
 Tapziq is an Android keyboard with a QWERTY layout, one-shot shift, numbers,
 symbols, context-aware enter actions, Android's keyboard switch key, and
-user-initiated proofreading powered on-device by Gemini Nano.
+user-initiated proofreading powered on-device by Gemma 4 E2B-it.
+
+The repository also contains a separate [browser-only edition](web/README.md).
+It stores the web-specific Gemma model in origin-private browser storage and
+runs proofreading in a local WebGPU worker. Its virtual keyboard works only
+inside that page: browser sandboxing does not allow a PWA to become Android's
+system-wide keyboard or read another app's text field.
 
 Ordinary key presses go straight to Android's active text field. Tapziq has no
 ads, clipboard access, typing history, or Tapziq-owned analytics. Text submitted
-for proofreading is processed locally through Android AICore and is not saved.
-The Google ML Kit SDK can use network access for model/configuration updates and
-sends Google non-content diagnostics and usage metrics. See the full
-[privacy notice](PRIVACY.md).
+for proofreading is processed by Tapziq's app-private model and is not saved or
+sent over the network. Tapziq uses network access only when the user explicitly
+downloads the model. See the full [privacy notice](PRIVACY.md).
 
-## Proofread with Gemini Nano
+## Proofread with Gemma 4
 
-In an ordinary text field, select a passage or leave the cursor in a short field,
-then tap **Proofread with Gemini Nano**. Tapziq opens a brief foreground screen
-while AICore checks spelling and grammar, returns to the editor, and displays the
-best suggestion above the keyboard. Nothing changes until you tap **Apply**.
+First open **Tapziq Keyboard** and download the pinned 2.59 GB Gemma 4 E2B-it
+model. Tapziq supports interrupted downloads, verifies the exact byte count and
+SHA-256 digest, and installs the model only after verification. The model is
+stored under Tapziq's private, no-backup app storage and can be removed from the
+same setup screen. Once installed, proofreading works offline.
+
+In an ordinary text field, select a passage or leave the cursor in a short
+field, then tap **Proofread with Gemma 4**. Tapziq opens a foreground screen
+while its local LiteRT-LM runtime checks spelling and grammar, returns to the
+editor, and displays the suggestion above the keyboard. Model loading and
+generation time depend strongly on the device CPU and available memory. Nothing
+changes until you tap **Apply**.
 
 Proofreading currently uses English keyboard input and accepts up to 500
 characters from active fields up to 2,000 characters long. It is disabled for
-password, email-address, no-suggestions, and
-non-text fields. It requires a supported device, compatible AICore, a locked
-bootloader, and a user age of 18 or older. The first request may download model
-assets. Unsupported devices keep the core keyboard fully usable and show a
-clear unavailable message.
+password, email-address, no-suggestions, and non-text fields. Gemma 4 requires a
+64-bit Android device with substantial free storage and memory. If the model is
+missing or the device cannot load it, proofreading fails closed without changing
+the active field.
 
-Tapziq does not hard-code a manufacturer or model. It asks AICore whether the
-Proofreading feature is available at runtime, so the same APK works across
-Google's current [supported-device list](https://developers.google.com/ml-kit/genai)
-and fails closed elsewhere. The complete cross-app flow has been physically
-verified on a locked US Galaxy S25 Ultra (SM-S938U) running Android 16.
+The model is the Apache-2.0
+[`gemma-4-E2B-it.litertlm`](https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm)
+artifact at a pinned repository revision. Inference uses Google's open-source
+[LiteRT-LM](https://developers.google.com/edge/litert-lm) Android runtime; Tapziq
+does not use Gemini Nano, Android AICore, or ML Kit GenAI.
+
+## Browser-owned edition
+
+The isolated `web/` project is a self-contained PWA with its own lockfile. It
+downloads the pinned `gemma-4-E2B-it-web.litertlm` artifact only after explicit
+confirmation, resumes partial downloads in origin-private file storage, checks
+the exact 2,008,432,640-byte length and SHA-256 digest, and exposes only verified
+bytes to LiteRT-LM. Runtime JavaScript and WebAssembly are self-hosted. Editor
+text and suggestions remain in page/worker memory and are never put into model
+download requests or browser persistence.
+
+```bash
+cd web
+npm ci --ignore-scripts
+npm test
+npm run dev
+```
+
+Use a secure-context Chromium browser with WebGPU, origin-private file storage,
+Web Locks, at least 2.52 GB of free browser quota, and enough GPU memory. See the
+[browser privacy boundary](web/PRIVACY.md) and [browser build and verification
+guide](web/README.md).
 
 ## Install
 
-Tapziq requires Android 8.0 or newer.
+Tapziq requires a 64-bit device running Android 8.0 or newer.
 
 1. Download all four assets from the
    [latest GitHub release](https://github.com/tapziq/Tapziq/releases/latest).
@@ -45,7 +79,11 @@ Tapziq requires Android 8.0 or newer.
 3. Open **Tapziq Keyboard**, tap **Enable Tapziq Keyboard**, and enable it in
    Android's keyboard settings.
 4. Return to Tapziq, tap **Choose Tapziq Keyboard**, and select it.
-5. Tap the test field and type.
+5. To use proofreading, tap **Download Gemma 4 E2B-it** in Tapziq and keep the
+   screen open until the download and checksum verification finish. You can
+   explicitly pause and later resume the transfer. Wi-Fi and at least 3 GB of
+   free space are recommended.
+6. Tap the test field and type.
 
 Android intentionally requires the user to enable and select every downloaded
 keyboard. The app cannot bypass those system screens.
@@ -104,7 +142,6 @@ scripts/package-semantic-release.sh 0.1.1 "$(git rev-parse HEAD)"
 The clean commit used for a rehearsal must already declare the same
 `tapziqSourceVersionName` and `tapziqSourceVersionCode` in
 `app/build.gradle.kts`; release-time Gradle properties cannot mask stale source
-metadata. The packaging path disables Gradle's configuration cache so signing
 metadata. The packaging path disables Gradle's configuration cache so signing
 passwords are not persisted there. It requires a clean Git worktree, runs the
 unit tests and release lint, builds the signed APK, and checks its package,

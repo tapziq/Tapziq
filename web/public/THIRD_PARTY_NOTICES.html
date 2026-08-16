@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="referrer" content="no-referrer">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'"
+    >
+    <title>Tapziq Browser Third-Party Notices</title>
+    <link rel="stylesheet" href="./docs.css">
+  </head>
+  <body>
+    <header>
+      <p class="eyebrow">Browser-only edition</p>
+      <h1>Third-party notices</h1>
+      <p class="lede">Last updated: August 15, 2026</p>
+      <nav aria-label="Browser edition documents">
+        <a href="./">Open app</a>
+        <a href="./README.html">Overview</a>
+        <a href="./PRIVACY.html">Privacy</a>
+        <strong aria-current="page">Third-party notices</strong>
+      </nav>
+    </header>
+
+    <main>
+      <p>
+        These notices cover the browser edition and its production runtime. The native Android
+        application has a separate dependency set and separate notices. Tapziq's own source is available
+        under the <a href="./LICENSE.txt">Apache License, Version 2.0</a>, which is included as
+        <code>LICENSE.txt</code> in a production browser build.
+      </p>
+
+      <section aria-labelledby="model">
+        <h2 id="model">Gemma 4 E2B-it web model</h2>
+        <ul class="metadata">
+          <li>Repository: <a href="https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm" rel="noreferrer">litert-community/gemma-4-E2B-it-litert-lm</a></li>
+          <li>Artifact: <code>gemma-4-E2B-it-web.litertlm</code></li>
+          <li>Revision: <code>6b78abd019e61a1ca4cbe3b212d2c9ce8ff38a94</code></li>
+          <li>Size: <code>2,008,432,640</code> bytes</li>
+          <li>SHA-256: <code>3a08e8d94e23b814ae5414469c370c503813949acb8ceaa17e4ebf8a35af35b5</code></li>
+          <li>License reported by the model repository: Apache License 2.0</li>
+        </ul>
+        <p>
+          The model is not bundled in Tapziq's source tree or production web bundle. The user's browser
+          downloads the separately hosted artifact only after confirmation, stores it in origin-private
+          browser storage, and verifies its size and SHA-256 before use.
+        </p>
+        <p>
+          “Gemma” and other third-party names identify their respective projects. Browser-managed storage
+          does not imply endorsement or transfer ownership of third-party software or model weights.
+        </p>
+      </section>
+
+      <section aria-labelledby="litert">
+        <h2 id="litert">LiteRT-LM JavaScript runtime</h2>
+        <ul class="metadata">
+          <li>Package: <a href="https://www.npmjs.com/package/@litert-lm/core/v/0.15.0" rel="noreferrer"><code>@litert-lm/core 0.15.0</code></a></li>
+          <li>Source: <a href="https://github.com/google-ai-edge/LiteRT-LM/tree/v0.15.0/js/packages/core" rel="noreferrer"><code>google-ai-edge/LiteRT-LM</code> at <code>v0.15.0</code></a></li>
+          <li>npm integrity: <code>sha512-NWLgsQ7ktO2dCsx2z/KzX9r/1VL2Sfjl31zskCAzGwq8ujPRrBzJXz2IXCQJ1Kj29IaVa4b86SDR0aoAURuWJw==</code></li>
+          <li>License: Apache License 2.0</li>
+        </ul>
+        <p>
+          Tapziq bundles the JavaScript library and self-hosts the package's WebAssembly runtime files.
+          LiteRT-LM's browser API is an early preview.
+        </p>
+
+        <h3>Resolved production dependency</h3>
+        <ul class="metadata">
+          <li>Package: <a href="https://www.npmjs.com/package/@litertjs/wasm-utils/v/2.5.3" rel="noreferrer"><code>@litertjs/wasm-utils 2.5.3</code></a></li>
+          <li>Source: <a href="https://github.com/google-ai-edge/LiteRT" rel="noreferrer"><code>google-ai-edge/LiteRT</code></a></li>
+          <li>npm integrity: <code>sha512-4fJiw6tBQnIs+0jH/OQ16nYOiSl8/+zZnn5h2ul8aTKHi05sVqZW580Tmk78pC2kT39A9OYBVdFawteZ/sI1kQ==</code></li>
+          <li>License: Apache License 2.0</li>
+        </ul>
+        <p>The complete Apache License 2.0 text is available in the bundled <a href="./LICENSE.txt"><code>LICENSE.txt</code></a>.</p>
+      </section>
+
+      <section aria-labelledby="noble">
+        <h2 id="noble">noble-hashes</h2>
+        <ul class="metadata">
+          <li>Package: <a href="https://www.npmjs.com/package/@noble/hashes/v/2.3.0" rel="noreferrer"><code>@noble/hashes 2.3.0</code></a></li>
+          <li>Source: <a href="https://github.com/paulmillr/noble-hashes/tree/2.3.0" rel="noreferrer"><code>paulmillr/noble-hashes</code> at <code>2.3.0</code></a></li>
+          <li>npm integrity: <code>sha512-oN+QwyX7VSHotibwubG3kpzbwKrfnyR6OOO+3Nk/53ADL7FmgHHz4TgrbaYKvvOw09u6QTx0oiH1cNCIOuN0CQ==</code></li>
+          <li>License: MIT</li>
+        </ul>
+        <p>Tapziq uses noble-hashes to calculate the model's SHA-256 inside the browser.</p>
+        <h3>MIT License text</h3>
+        <pre>The MIT License (MIT)
+
+Copyright (c) 2022 Paul Miller (https://paulmillr.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.</pre>
+      </section>
+
+      <section aria-labelledby="development">
+        <h2 id="development">Development-only packages</h2>
+        <p>
+          The lockfile also resolves TypeScript, Vite, Vitest, Playwright, type packages, and their
+          transitive dependencies for building and testing. They are not application runtime dependencies.
+          Their exact versions, sources, integrity values, and SPDX license identifiers are recorded in
+          <code>package-lock.json</code>; their license files are installed by <code>npm ci</code>.
+        </p>
+      </section>
+    </main>
+
+    <footer>
+      This is a script-free copy designed to remain readable offline with the cached documentation assets.
+      See the <a href="./README.html">overview</a> and <a href="./PRIVACY.html">privacy statement</a>.
+    </footer>
+  </body>
+</html>

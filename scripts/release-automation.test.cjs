@@ -20,6 +20,10 @@ const workflow = readFileSync(
   path.join(repositoryRoot, ".github", "workflows", "release.yml"),
   "utf8",
 );
+const webWorkflow = readFileSync(
+  path.join(repositoryRoot, ".github", "workflows", "web.yml"),
+  "utf8",
+);
 const versionCodeScript = path.join(
   repositoryRoot,
   "scripts",
@@ -59,6 +63,10 @@ const currentReleaseVerifierScript = readFileSync(
 );
 const apkVerifierScript = readFileSync(
   path.join(repositoryRoot, "scripts", "verify-release-apk.sh"),
+  "utf8",
+);
+const thirdPartyNotices = readFileSync(
+  path.join(repositoryRoot, "THIRD_PARTY_NOTICES.md"),
   "utf8",
 );
 const emulatorSmokeScript = readFileSync(
@@ -202,11 +210,18 @@ const notesOptions = pluginEntries.get(
 );
 
 async function releaseType(message) {
+  return releaseTypeFor([message]);
+}
+
+async function releaseTypeFor(messages) {
   const { analyzeCommits } = await import("@semantic-release/commit-analyzer");
   return analyzeCommits(
     analyzerOptions,
     {
-      commits: [{ hash: "0123456789abcdef", message }],
+      commits: messages.map((message, index) => ({
+        hash: `${index + 1}`.padStart(40, "0"),
+        message,
+      })),
       cwd: repositoryRoot,
       logger: { log() {} },
     },
@@ -278,7 +293,13 @@ test("release configuration packages before publishing exact assets", () => {
       "@semantic-release/github",
     ],
   );
-  assert.deepEqual(notesOptions, analyzerOptions);
+  assert.deepEqual(analyzerOptions.releaseRules, [
+    { scope: "web", release: false },
+  ]);
+  assert.equal(
+    notesOptions.presetConfig.ignoreCommits,
+    "^[a-z]+\\(web\\)!?:",
+  );
   assert.equal(
     pluginEntries.get("@semantic-release/exec").prepareCmd,
     "node ./scripts/prepare-release-version.cjs prepare "
@@ -316,6 +337,33 @@ test("release configuration packages before publishing exact assets", () => {
   assert.equal(githubOptions.releasedLabels, false);
 });
 
+test("APK verifier enforces LiteRT-LM native and legal payloads", () => {
+  assert.match(apkVerifierScript, /native-code: 'arm64-v8a' 'x86_64'/);
+  assert.match(apkVerifierScript, /lib\/arm64-v8a\/liblitertlm_jni\.so/);
+  assert.match(apkVerifierScript, /lib\/x86_64\/liblitertlm_jni\.so/);
+  assert.match(apkVerifierScript, /assets\/legal\/THIRD_PARTY_NOTICES\.md/);
+  assert.match(thirdPartyNotices, /LiteRT-LM Android runtime version 0\.16\.0/);
+  assert.match(
+    thirdPartyNotices,
+    /9f22049e84627890d60dd468708885661fb1cdbc72c1438d817e63f0f32c1a3d/,
+  );
+  assert.equal(
+    readFileSync(
+      path.join(
+        repositoryRoot,
+        "app",
+        "src",
+        "main",
+        "assets",
+        "legal",
+        "THIRD_PARTY_NOTICES.md",
+      ),
+      "utf8",
+    ),
+    thirdPartyNotices,
+  );
+});
+
 test("Conventional Commits map to intended SemVer levels", async () => {
   assert.equal(await releaseType("fix: repair shift state"), "patch");
   assert.equal(await releaseType("perf: reduce keyboard startup work"), "patch");
@@ -326,6 +374,24 @@ test("Conventional Commits map to intended SemVer levels", async () => {
       "chore: reorganize code\n\nBREAKING CHANGE: remove the old contract",
     ),
     "major",
+  );
+});
+
+test("web-scoped commits never publish or elevate Android releases", async () => {
+  for (const message of [
+    "fix(web): repair offline launch",
+    "feat(web): add browser model controls",
+    "feat(web)!: replace browser storage format\n\nBREAKING CHANGE: redownload the model",
+  ]) {
+    assert.equal(await releaseType(message), null, message);
+  }
+
+  assert.equal(
+    await releaseTypeFor([
+      "fix: repair Android keyboard state",
+      "feat(web)!: replace browser storage format\n\nBREAKING CHANGE: redownload the model",
+    ]),
+    "patch",
   );
 });
 
@@ -347,13 +413,36 @@ test("generated release notes include user-visible changes", async () => {
   const notes = await releaseNotes([
     "feat(layout): add a compact layout",
     "fix(shift): preserve one-shot state",
+    "feat(web): add browser model controls",
+    "fix(web): repair offline launch",
+    "feat(web)!: replace browser storage format\n\nBREAKING CHANGE: redownload the model",
     "docs: clarify installation",
   ]);
   assert.match(notes, /### Features/);
   assert.match(notes, /add a compact layout/);
   assert.match(notes, /### Bug Fixes/);
   assert.match(notes, /preserve one-shot state/);
+  assert.doesNotMatch(notes, /browser model controls|offline launch|redownload the model/);
   assert.doesNotMatch(notes, /clarify installation/);
+});
+
+test("browser workflow is path-filtered and verifies the locked web project", () => {
+  assert.match(webWorkflow, /pull_request:\n    paths:\n      - "web\/\*\*"/);
+  assert.match(
+    webWorkflow,
+    /push:\n    branches:\n      - main\n    paths:\n      - "web\/\*\*"/,
+  );
+  assert.match(webWorkflow, /- "\.github\/workflows\/web\.yml"/);
+  assert.match(webWorkflow, /working-directory: web/);
+  assert.match(webWorkflow, /node-version: "24\.17\.0"/);
+  assert.match(webWorkflow, /cache-dependency-path: web\/package-lock\.json/);
+  assert.match(webWorkflow, /persist-credentials: false/);
+  assert.match(webWorkflow, /run: npm ci --ignore-scripts/);
+  assert.match(webWorkflow, /run: npm test\n/);
+  assert.match(webWorkflow, /run: npm run build/);
+  assert.match(webWorkflow, /run: npm run test:e2e/);
+  assert.match(webWorkflow, /run: npm run audit/);
+  assert.doesNotMatch(webWorkflow, /TAPZIQ_RELEASE_|contents: write/);
 });
 
 test("semantic versions map to monotonic Android version codes", () => {
@@ -692,17 +781,11 @@ test("APK verification accepts portable SHA-256 tools and requires unzip", () =>
   assert.match(apkVerifierScript, /apk_sha256="\$\(shasum -a 256/);
 });
 
-test("APK verification enforces the complete Gemini Nano permission contract", () => {
-  assert.match(apkVerifierScript, /android\.permission\.ACCESS_NETWORK_STATE/);
+test("APK verification permits only the Gemma model download network permission", () => {
   assert.match(apkVerifierScript, /android\.permission\.INTERNET/);
-  assert.match(
-    apkVerifierScript,
-    /com\.google\.android\.apps\.aicore\.service\.BIND_SERVICE/,
-  );
-  assert.match(
-    apkVerifierScript,
-    /com\.tapziq\.keyboard\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION/,
-  );
+  assert.doesNotMatch(apkVerifierScript, /ACCESS_NETWORK_STATE/);
+  assert.doesNotMatch(apkVerifierScript, /BIND_SERVICE/);
+  assert.doesNotMatch(apkVerifierScript, /DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION/);
   assert.match(apkVerifierScript, /actual_permissions/);
   assert.match(apkVerifierScript, /expected_permissions/);
 });

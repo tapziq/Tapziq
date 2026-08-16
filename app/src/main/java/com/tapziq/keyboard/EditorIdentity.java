@@ -9,7 +9,7 @@ import android.view.inputmethod.InputConnection;
 
 import java.util.Objects;
 
-/** Identifies the exact editor connection that supplied a proofreading request. */
+/** Identifies the exact editor that supplied a proofreading request. */
 final class EditorIdentity {
     private final int uid;
     private final int pid;
@@ -75,8 +75,10 @@ final class EditorIdentity {
                 || inputType != info.inputType) {
             return false;
         }
-        // A virtual AutofillId identifies the child editor. A nonvirtual ID can
-        // identify only its container, so corroborate it with a positive fieldId.
+        // Android 16 exposes the edited view's stable AutofillId. A virtual ID
+        // identifies its child editor directly; a native-view ID is corroborated
+        // with fieldId. Do not require wrapper identity here because Android can
+        // recreate the IME's RemoteInputConnection while returning to the same view.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA && autofillId != null) {
             if (!autofillId.equals(Api36Impl.getAutofillId(info))) {
                 return false;
@@ -84,7 +86,10 @@ final class EditorIdentity {
             if (Api36Impl.isVirtual(autofillId)) {
                 return true;
             }
+            return fieldId > 0 && fieldId == info.fieldId;
         }
+        // Older releases have no framework field identifier that survives a
+        // reconnect, so retain the stricter connection-object requirement.
         return inputConnection == currentConnection
                 && fieldId > 0
                 && fieldId == info.fieldId;

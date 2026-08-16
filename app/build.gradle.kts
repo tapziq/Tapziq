@@ -77,7 +77,8 @@ android {
 }
 
 dependencies {
-    implementation("com.google.mlkit:genai-proofreading:1.0.0-beta1")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.16.0")
+    implementation("com.google.code.gson:gson:2.13.2")
     testImplementation("junit:junit:4.13.2")
 }
 

@@ -1,0 +1,33 @@
+{
+  "name": "tapziq-browser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24.15.0 <25"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:test": "VITE_ALLOW_FAKE_MODEL=true vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run tests",
+    "test:watch": "vitest",
+    "test:e2e": "npm run build:test && playwright test",
+    "verify:real": "node scripts/verify-real-browser.mjs",
+    "audit": "npm audit --omit=dev"
+  },
+  "dependencies": {
+    "@litert-lm/core": "0.15.0",
+    "@noble/hashes": "2.3.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "26.2.0",
+    "@webgpu/types": "0.1.71",
+    "typescript": "6.0.3",
+    "vite": "8.2.1",
+    "vitest": "4.1.10"
+  }
+}

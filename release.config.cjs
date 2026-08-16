@@ -3,6 +3,20 @@ const conventionalCommits = {
   presetConfig: {},
 };
 
+const androidCommitAnalyzer = {
+  ...conventionalCommits,
+  releaseRules: [
+    { scope: "web", release: false },
+  ],
+};
+
+const androidReleaseNotes = {
+  ...conventionalCommits,
+  presetConfig: {
+    ignoreCommits: "^[a-z]+\\(web\\)!?:",
+  },
+};
+
 function repositoryUrlFromEnvironment() {
   const repository = process.env.TAPZIQ_RELEASE_REPOSITORY;
   if (repository === undefined) {
@@ -31,8 +45,8 @@ const releaseConfig = {
   branches: ["main"],
   tagFormat: "v${version}",
   plugins: [
-    ["@semantic-release/commit-analyzer", conventionalCommits],
-    ["@semantic-release/release-notes-generator", conventionalCommits],
+    ["@semantic-release/commit-analyzer", androidCommitAnalyzer],
+    ["@semantic-release/release-notes-generator", androidReleaseNotes],
     [
       "@semantic-release/exec",
       {
