@@ -1,6 +1,6 @@
 # Tapziq browser privacy
 
-Last updated: August 15, 2026
+Last updated: August 16, 2026
 
 This document describes the browser-only Tapziq PWA. The native Android
 keyboard has a different platform boundary and is not covered here.
@@ -22,13 +22,18 @@ host, but the application does not put editor text in them.
 
 - Text entered or pasted into the editor remains in the page and its dedicated
   worker's volatile memory.
-- Tapziq sends only the selected passage, or the whole editor when eligible, to
-  the local worker after the user chooses **Proofread**. The maximum request is
-  500 UTF-16 code units.
-- The local model's result stays in memory and appears as a preview. Tapziq
-  changes the editor only after the user chooses **Apply**. **Dismiss** and
-  **Cancel** do not change it.
-- Tapziq rejects a suggestion if the original text or selection has changed.
+- Manual proofreading sends only the selected passage, or the whole editor when
+  eligible, to the local worker after the user chooses **Proofread**.
+- **Auto-correct with Gemma 4** is off by default. When explicitly enabled, only
+  the on-page virtual keyboard's space, completion-punctuation, and Enter keys
+  can schedule a local check. The request contains at most 500 recent UTF-16
+  code units and excludes the newly committed boundary.
+- Manual results stay in memory as a preview and change text only after
+  **Apply**. An automatic result applies directly only when the complete editor
+  text and post-boundary caret still exactly match its snapshot; a one-step
+  **Undo** is then available.
+- Tapziq cancels or discards stale automatic work and rejects stale manual
+  suggestions. **Dismiss** and **Cancel** do not change editor text.
 - Tapziq application code does not persist editor contents, selections,
   prompts, model responses, typing history, or clipboard contents. Native
   browser spellcheck, autocomplete, and autocapitalize are disabled on the

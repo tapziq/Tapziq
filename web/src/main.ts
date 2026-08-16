@@ -1,6 +1,15 @@
 import "./styles.css";
 
 import {
+  AUTO_CORRECT_DEBOUNCE_MS,
+  applyAutoCorrectSuggestion,
+  applyAutoCorrectUndo,
+  captureAutoCorrectSnapshot,
+  createAutoCorrectUndo,
+  editorStatesMatch,
+  type AutoCorrectUndo,
+} from "./autocorrect";
+import {
   applyPendingSuggestion,
   captureEditorSnapshot,
   createPendingSuggestion,
@@ -47,22 +56,50 @@ const removeButton = requiredElement<HTMLButtonElement>("remove-button");
 const downloadProgress = requiredElement<HTMLProgressElement>("download-progress");
 const downloadDetail = requiredElement<HTMLParagraphElement>("download-detail");
 const status = requiredElement<HTMLParagraphElement>("status");
+const autoCorrectToggle = requiredElement<HTMLInputElement>("autocorrect-toggle");
+const autoCorrectStatus = requiredElement<HTMLParagraphElement>("autocorrect-status");
+const undoAutoCorrectButton = requiredElement<HTMLButtonElement>(
+  "undo-autocorrect-button",
+);
 
+const query = new URLSearchParams(location.search);
+const requestedFakeDelayText = query.get("test-model-delay");
+const requestedFakeDelay = Number(requestedFakeDelayText);
+const fakeDelay = requestedFakeDelayText !== null && Number.isFinite(requestedFakeDelay)
+  ? Math.max(0, Math.min(1_000, requestedFakeDelay))
+  : undefined;
 const client: BrowserModelClient = import.meta.env.VITE_ALLOW_FAKE_MODEL === "true"
-  && new URLSearchParams(location.search).get("test-model") === "1"
-  ? new FakeModelClient()
+  && query.get("test-model") === "1"
+  ? new FakeModelClient(fakeDelay)
   : new WorkerModelClient();
 
 let modelState: ModelState = { ready: false, storedBytes: 0 };
 let capabilitiesReady = false;
 let modelBusy = false;
 let proofreadBusy = false;
+let autoCorrectBusy = false;
 let pendingSuggestion: PendingSuggestion | null = null;
 let activeSnapshot: EditorSnapshot | null = null;
+let autoCorrectGeneration = 0;
+let scheduledAutoCorrect: {
+  readonly generation: number;
+  readonly snapshot: EditorSnapshot;
+  readonly timer: number;
+} | null = null;
+let activeAutoCorrect: {
+  readonly generation: number;
+  readonly snapshot: EditorSnapshot;
+  cancelRequested: boolean;
+} | null = null;
+let autoCorrectUndo: AutoCorrectUndo | null = null;
 let shift = false;
 
 function setStatus(message: string): void {
   status.textContent = message;
+}
+
+function setAutoCorrectStatus(message: string): void {
+  autoCorrectStatus.textContent = message;
 }
 
 function editorState(): EditorState {
@@ -80,6 +117,10 @@ function writeEditorState(next: EditorState): void {
   editor.focus();
 }
 
+function inferenceBusy(): boolean {
+  return proofreadBusy || autoCorrectBusy;
+}
+
 function updateEditorUi(): void {
   characterCount.textContent = `${editor.value.length.toLocaleString()} / 2,000`;
   if (pendingSuggestion !== null) {
@@ -87,10 +128,15 @@ function updateEditorUi(): void {
     applyButton.disabled = !valid;
     preview.classList.toggle("stale", !valid);
   }
-  proofreadButton.disabled = !modelState.ready || proofreadBusy || modelBusy
+  proofreadButton.disabled = !modelState.ready || inferenceBusy() || modelBusy
     || editor.value.trim().length === 0;
-  downloadButton.disabled = !capabilitiesReady || modelBusy || proofreadBusy;
-  removeButton.disabled = proofreadBusy || modelBusy;
+  downloadButton.disabled = !capabilitiesReady || modelBusy || inferenceBusy();
+  removeButton.disabled = inferenceBusy() || modelBusy;
+  autoCorrectToggle.disabled = !capabilitiesReady || !modelState.ready || modelBusy;
+  undoAutoCorrectButton.hidden = autoCorrectUndo === null;
+  undoAutoCorrectButton.disabled = autoCorrectBusy
+    || autoCorrectUndo === null
+    || !editorStatesMatch(editorState(), autoCorrectUndo.after);
 }
 
 function renderModelState(): void {
@@ -133,6 +179,11 @@ function setProofreadBusy(busy: boolean): void {
   updateEditorUi();
 }
 
+function setAutoCorrectBusy(busy: boolean): void {
+  autoCorrectBusy = busy;
+  updateEditorUi();
+}
+
 function showSuggestion(pending: PendingSuggestion): void {
   pendingSuggestion = pending;
   previewText.textContent = pending.preview;
@@ -149,6 +200,145 @@ function hideSuggestion(): void {
   preview.classList.remove("stale");
 }
 
+function clearAutoCorrectUndo(): void {
+  autoCorrectUndo = null;
+  updateEditorUi();
+}
+
+function stopAutoCorrectWork(): boolean {
+  autoCorrectGeneration += 1;
+  const hadScheduled = scheduledAutoCorrect !== null;
+  if (scheduledAutoCorrect !== null) {
+    window.clearTimeout(scheduledAutoCorrect.timer);
+    scheduledAutoCorrect = null;
+  }
+
+  const request = activeAutoCorrect;
+  if (request !== null && !request.cancelRequested) {
+    request.cancelRequested = true;
+    void client.cancelProofread().catch(() => undefined);
+  }
+  return hadScheduled || request !== null;
+}
+
+function autoCorrectIdleMessage(): string {
+  return autoCorrectToggle.checked
+    ? "Auto-correct is on. It waits for a pause after a virtual word boundary."
+    : "Auto-correct is off. Turn it on to check virtual-keyboard word boundaries.";
+}
+
+function scheduleAutoCorrectTimer(
+  snapshot: EditorSnapshot,
+  generation: number,
+  delay: number,
+): void {
+  const timer = window.setTimeout(() => {
+    if (scheduledAutoCorrect?.generation === generation) {
+      scheduledAutoCorrect = null;
+    }
+    void runAutoCorrect(snapshot, generation);
+  }, delay);
+  scheduledAutoCorrect = { generation, snapshot, timer };
+}
+
+function scheduleAutoCorrect(key: VirtualKey, next: EditorState): void {
+  if (!autoCorrectToggle.checked || !capabilitiesReady || !modelState.ready) {
+    return;
+  }
+  const snapshot = captureAutoCorrectSnapshot(next, key);
+  if (snapshot === null) {
+    setAutoCorrectStatus(autoCorrectIdleMessage());
+    return;
+  }
+
+  const generation = ++autoCorrectGeneration;
+  scheduleAutoCorrectTimer(snapshot, generation, AUTO_CORRECT_DEBOUNCE_MS);
+  setAutoCorrectStatus("Auto-correct is waiting briefly for you to finish typing…");
+}
+
+async function runAutoCorrect(
+  snapshot: EditorSnapshot,
+  generation: number,
+): Promise<void> {
+  if (
+    generation !== autoCorrectGeneration
+    || !autoCorrectToggle.checked
+    || !capabilitiesReady
+    || !modelState.ready
+  ) {
+    return;
+  }
+  if (!snapshotMatches(editorState(), snapshot)) {
+    setAutoCorrectStatus(
+      "Auto-correct discarded an outdated check. Your newer text was not changed.",
+    );
+    return;
+  }
+  if (inferenceBusy() || modelBusy) {
+    scheduleAutoCorrectTimer(snapshot, generation, 100);
+    return;
+  }
+
+  const request = { generation, snapshot, cancelRequested: false };
+  activeAutoCorrect = request;
+  setAutoCorrectBusy(true);
+  setAutoCorrectStatus(
+    "Auto-correct is checking up to 500 recent characters locally with Gemma 4…",
+  );
+  try {
+    const result = await client.proofread(snapshot.targetText);
+    if (
+      generation !== autoCorrectGeneration
+      || activeAutoCorrect !== request
+      || !autoCorrectToggle.checked
+      || !snapshotMatches(editorState(), snapshot)
+    ) {
+      if (generation === autoCorrectGeneration) {
+        setAutoCorrectStatus(
+          "Auto-correct discarded an outdated result. Your newer text was not changed.",
+        );
+      }
+      return;
+    }
+    if (result.kind === "no-change") {
+      setAutoCorrectStatus("Gemma checked the recent text locally; no change was needed.");
+      return;
+    }
+
+    const pending = createPendingSuggestion(snapshot, result.suggestion);
+    const before = editorState();
+    const applied = applyAutoCorrectSuggestion(before, pending, editor.maxLength);
+    if (applied.outcome === "stale") {
+      setAutoCorrectStatus(
+        "Auto-correct discarded an outdated result. Your newer text was not changed.",
+      );
+      return;
+    }
+    if (applied.outcome === "unsafe") {
+      setAutoCorrectStatus(
+        "Gemma returned an auto-correction that was not safe to apply. The editor was not changed.",
+      );
+      return;
+    }
+
+    autoCorrectUndo = createAutoCorrectUndo(before, applied.editor);
+    writeEditorState(applied.editor);
+    setAutoCorrectStatus("Gemma auto-corrected the recent text locally. Undo is available.");
+  } catch (error) {
+    if (generation !== autoCorrectGeneration || activeAutoCorrect !== request) {
+      return;
+    }
+    setAutoCorrectStatus(error instanceof Error && error.name === "AbortError"
+      ? "Auto-correct stopped. The editor was not changed."
+      : `Auto-correct failed safely: ${error instanceof Error ? error.message : "Unknown error."}`);
+  } finally {
+    if (activeAutoCorrect === request) {
+      activeAutoCorrect = null;
+      setAutoCorrectBusy(false);
+    }
+  }
+}
+
 const letterRows = [
   ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
   ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
@@ -163,8 +353,11 @@ function keyboardButton(label: string, key: VirtualKey, className = ""): HTMLBut
   button.setAttribute("aria-label", label);
   button.addEventListener("pointerdown", (event) => event.preventDefault());
   button.addEventListener("click", () => {
+    stopAutoCorrectWork();
+    autoCorrectUndo = null;
     const next = applyVirtualKey(editorState(), key);
     writeEditorState(next);
+    scheduleAutoCorrect(key, next);
     if (key.kind === "text" && shift) {
       shift = false;
       renderKeyboard();
@@ -288,6 +481,9 @@ downloadButton.addEventListener("click", () => {
       setStatus("Model verified. Preparing the self-hosted LiteRT-LM runtime for offline use…");
       await client.prepareRuntime();
       setStatus("Gemma 4 is verified and ready for local, offline proofreading.");
+      setAutoCorrectStatus(
+        "Auto-correct is off. Turn it on to check virtual-keyboard word boundaries.",
+      );
     } catch (error) {
       setStatus(error instanceof Error && error.name === "AbortError"
         ? "Download paused. Saved browser bytes can be resumed."
@@ -307,13 +503,18 @@ cancelDownloadButton.addEventListener("click", () => {
 });
 
 removeButton.addEventListener("click", () => {
-  if (proofreadBusy || modelBusy) {
+  if (inferenceBusy() || modelBusy) {
     return;
   }
   if (!window.confirm("Remove the verified Gemma model and all partial model bytes from this browser?")) {
     return;
   }
   void (async () => {
+    stopAutoCorrectWork();
+    autoCorrectToggle.checked = false;
+    setAutoCorrectStatus(
+      "Auto-correct is off. Download the verified model again to enable it.",
+    );
     setModelBusy(true);
     try {
       await client.remove();
@@ -330,6 +531,9 @@ removeButton.addEventListener("click", () => {
 
 proofreadButton.addEventListener("click", () => {
   void (async () => {
+    if (stopAutoCorrectWork() && autoCorrectToggle.checked) {
+      setAutoCorrectStatus("Auto-correct paused for this manual proofreading check.");
+    }
     hideSuggestion();
     let snapshot: EditorSnapshot;
     try {
@@ -384,6 +588,7 @@ applyButton.addEventListener("click", () => {
     setStatus("The editor changed, so the stale suggestion was not applied.");
     return;
   }
+  clearAutoCorrectUndo();
   writeEditorState(result.editor);
   setStatus("Suggestion applied locally.");
 });
@@ -397,10 +602,83 @@ dismissButton.addEventListener("click", () => {
   setStatus("Suggestion dismissed. The editor was not changed.");
 });
 
-editor.addEventListener("input", updateEditorUi);
-editor.addEventListener("select", updateEditorUi);
-editor.addEventListener("keyup", updateEditorUi);
-window.addEventListener("pagehide", () => client.terminate(), { once: true });
+autoCorrectToggle.addEventListener("change", () => {
+  if (!autoCorrectToggle.checked) {
+    stopAutoCorrectWork();
+    setAutoCorrectStatus("Auto-correct is off. Existing editor text was not changed.");
+  } else if (!capabilitiesReady || !modelState.ready) {
+    autoCorrectToggle.checked = false;
+    setAutoCorrectStatus("Auto-correct needs the verified local model before it can run.");
+  } else {
+    setAutoCorrectStatus(
+      "Auto-correct is on. It waits for a pause after a virtual word boundary.",
+    );
+  }
+  updateEditorUi();
+});
+
+undoAutoCorrectButton.addEventListener("click", () => {
+  if (autoCorrectUndo === null) {
+    return;
+  }
+  const result = applyAutoCorrectUndo(editorState(), autoCorrectUndo);
+  autoCorrectUndo = null;
+  if (result.outcome !== "undone") {
+    updateEditorUi();
+    setAutoCorrectStatus(
+      "Undo expired because the editor or caret changed. No text was changed.",
+    );
+    return;
+  }
+  writeEditorState(result.editor);
+  setAutoCorrectStatus("The last Gemma auto-correction was undone locally.");
+});
+
+function editorChangedOutsideVirtualKeyboard(): void {
+  const hadWork = stopAutoCorrectWork();
+  const hadUndo = autoCorrectUndo !== null;
+  autoCorrectUndo = null;
+  updateEditorUi();
+  if (hadWork) {
+    setAutoCorrectStatus(
+      "Auto-correct stopped because the editor changed. No outdated result was applied.",
+    );
+  } else if (hadUndo) {
+    setAutoCorrectStatus(autoCorrectIdleMessage());
+  }
+}
+
+function selectionMayHaveChanged(): void {
+  const current = editorState();
+  const expected = scheduledAutoCorrect?.snapshot
+    ?? (activeAutoCorrect?.generation === autoCorrectGeneration
+      ? activeAutoCorrect.snapshot
+      : undefined);
+  const isJustAppliedAutoCorrect = autoCorrectUndo !== null
+    && editorStatesMatch(current, autoCorrectUndo.after);
+  if (
+    expected !== undefined
+    && !isJustAppliedAutoCorrect
+    && !snapshotMatches(current, expected)
+  ) {
+    stopAutoCorrectWork();
+    setAutoCorrectStatus(
+      "Auto-correct stopped because the caret changed. No outdated result was applied.",
+    );
+  }
+  if (autoCorrectUndo !== null && !editorStatesMatch(current, autoCorrectUndo.after)) {
+    autoCorrectUndo = null;
+  }
+  updateEditorUi();
+}
+
+editor.addEventListener("input", editorChangedOutsideVirtualKeyboard);
+editor.addEventListener("select", selectionMayHaveChanged);
+editor.addEventListener("keyup", selectionMayHaveChanged);
+window.addEventListener("pagehide", () => {
+  stopAutoCorrectWork();
+  client.terminate();
+}, { once: true });
 
 renderKeyboard();
 updateEditorUi();
@@ -411,8 +689,19 @@ void (async () => {
     await registerServiceWorker();
     await checkCapabilities();
     await refreshModelState();
-    if (modelState.ready) {
+    if (modelState.ready && capabilitiesReady) {
       setStatus("Verified Gemma 4 model found in this browser. Ready for local proofreading.");
+      setAutoCorrectStatus(
+        "Auto-correct is off. Turn it on to check virtual-keyboard word boundaries.",
+      );
+    } else if (modelState.ready) {
+      setAutoCorrectStatus(
+        "Auto-correct is off because this browser cannot run the verified local model.",
+      );
+    } else {
+      setAutoCorrectStatus(
+        "Auto-correct is off. Download the verified model before it can be enabled.",
+      );
     }
   } catch (error) {
     setStatus(`Browser setup failed: ${error instanceof Error ? error.message : "Unknown error."}`);

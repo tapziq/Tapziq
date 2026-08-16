@@ -60,6 +60,34 @@
           Native browser spellcheck and autocorrect are disabled for this editor.
         </p>
 
+        <div class="autocorrect-panel">
+          <div class="autocorrect-heading">
+            <label class="autocorrect-toggle" for="autocorrect-toggle">
+              <input
+                id="autocorrect-toggle"
+                type="checkbox"
+                aria-describedby="autocorrect-help autocorrect-status"
+                disabled
+              >
+              <span>
+                <strong>Auto-correct with Gemma 4</strong>
+                <small>Off by default</small>
+              </span>
+            </label>
+            <button id="undo-autocorrect-button" class="secondary" type="button" hidden>
+              Undo auto-correct
+            </button>
+          </div>
+          <p id="autocorrect-help" class="supporting-text">
+            When enabled, Gemma checks up to 500 recent characters after you tap virtual
+            space, completion punctuation, or Enter. Results apply only if the exact editor
+            and caret are unchanged.
+          </p>
+          <p id="autocorrect-status" class="autocorrect-status" aria-live="polite">
+            Auto-correct is off. The verified model must be ready before it can be enabled.
+          </p>
+        </div>
+
         <div id="preview" class="preview" hidden>
           <div>
             <p class="eyebrow">Preview only</p>

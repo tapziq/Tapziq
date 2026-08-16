@@ -16,7 +16,7 @@
     <header>
       <p class="eyebrow">Browser-only edition</p>
       <h1>Tapziq Browser Keyboard</h1>
-      <p class="lede">An installable PWA with an on-page virtual keyboard and local Gemma 4 proofreading.</p>
+      <p class="lede">An installable PWA with an on-page virtual keyboard, local Gemma 4 proofreading, and optional autocorrect.</p>
       <nav aria-label="Browser edition documents">
         <a href="./">Open app</a>
         <strong aria-current="page">Overview</strong>
@@ -90,8 +90,9 @@
           <li>While online, choose <strong>Download verified model</strong> and confirm the displayed remaining size.</li>
           <li>Leave the page open for the download. A paused partial file can be resumed. Tapziq verifies every byte before enabling the model.</li>
           <li>Type with the on-page keys or paste into the editor.</li>
-          <li>Select at most 500 UTF-16 code units, or use the whole editor when it is at most 500, then choose <strong>Proofread with browser Gemma 4</strong>.</li>
-          <li>Review the preview. Only <strong>Apply</strong> changes text; <strong>Dismiss</strong> and <strong>Cancel</strong> do not. Stale suggestions are rejected.</li>
+          <li>Optional: turn on <strong>Auto-correct with Gemma 4</strong>. It is off by default and checks recent text only after a virtual space, completion punctuation, or Enter. Automatic changes require an exact unchanged snapshot and offer one-step <strong>Undo</strong>.</li>
+          <li>For manual proofreading, select at most 500 UTF-16 code units, or use the whole editor when it is at most 500, then choose <strong>Proofread with browser Gemma 4</strong>.</li>
+          <li>Review the manual preview. Only <strong>Apply</strong> changes text; <strong>Dismiss</strong> and <strong>Cancel</strong> do not. Manual and automatic stale results are rejected.</li>
         </ol>
         <p>
           Once the app shell, runtime, and verified model have loaded, proofreading can run offline. An app

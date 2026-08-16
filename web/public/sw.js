@@ -1,4 +1,4 @@
-const SHELL_CACHE = "tapziq-browser-shell-v6";
+const SHELL_CACHE = "tapziq-browser-shell-v7";
 const scopeUrl = new URL(self.registration.scope);
 const indexUrl = new URL("./index.html", scopeUrl);
 const shellUrls = [
