@@ -3,19 +3,21 @@
 
 Tapziq is an Android keyboard with a QWERTY layout, one-shot shift, numbers,
 symbols, context-aware enter actions, Android's keyboard switch key, and
-user-initiated proofreading powered on-device by Gemma 4 E2B-it.
+user-initiated proofreading plus optional autocorrect powered on-device by
+Gemma 4 E2B-it.
 
 The repository also contains a separate [browser-only edition](web/README.md).
 It stores the web-specific Gemma model in origin-private browser storage and
-runs proofreading in a local WebGPU worker. Its virtual keyboard works only
-inside that page: browser sandboxing does not allow a PWA to become Android's
-system-wide keyboard or read another app's text field.
+runs proofreading and optional autocorrect in a local WebGPU worker. Its
+virtual keyboard works only inside that page: browser sandboxing does not allow
+a PWA to become Android's system-wide keyboard or read another app's text field.
 
-Ordinary key presses go straight to Android's active text field. Tapziq has no
-ads, clipboard access, typing history, or Tapziq-owned analytics. Text submitted
-for proofreading is processed by Tapziq's app-private model and is not saved or
-sent over the network. Tapziq uses network access only when the user explicitly
-downloads the model. See the full [privacy notice](PRIVACY.md).
+Ordinary key presses go straight to Android's active text field. Gemma reads
+editor text only for user-requested proofreading or after the user explicitly
+enables Gemma autocorrect. Tapziq has no ads, clipboard access, typing history,
+or Tapziq-owned analytics. Editor text processed by Tapziq's app-private model
+is not saved or sent over the network. Tapziq uses network access only when the
+user explicitly downloads the model. See the full [privacy notice](PRIVACY.md).
 
 ## Proofread with Gemma 4
 
@@ -45,6 +47,23 @@ artifact at a pinned repository revision. Inference uses Google's open-source
 [LiteRT-LM](https://developers.google.com/edge/litert-lm) Android runtime; Tapziq
 does not use Gemini Nano, Android AICore, or ML Kit GenAI.
 
+## Autocorrect with Gemma 4
+
+Gemma autocorrect is a separate opt-in setting and is off by default. After the
+verified model is installed, open **Tapziq Keyboard** and turn on **Use local
+Gemma 4 autocorrect**. Tapziq then waits briefly after a Tapziq Space,
+completion-punctuation, or multiline Enter key before checking the most recent
+completed passage with the same app-private model.
+
+An automatic correction is applied only if the active editor, complete field,
+and caret are still exactly unchanged. A new Tapziq key cancels pending work,
+and Backspace immediately after an applied correction restores the original
+text. Autocorrect shares proofreading's 500-character input and 2,000-character
+field limits and its secure-field exclusions. Model loading and generation can
+take noticeably longer than dictionary-based autocorrect, especially on its
+first use after the keyboard opens. Tapziq reuses the initialized engine for
+later checks while that keyboard view remains visible, then releases it.
+
 ## Browser-owned edition
 
 The isolated `web/` project is a self-contained PWA with its own lockfile. It
@@ -53,7 +72,9 @@ confirmation, resumes partial downloads in origin-private file storage, checks
 the exact 2,008,432,640-byte length and SHA-256 digest, and exposes only verified
 bytes to LiteRT-LM. Runtime JavaScript and WebAssembly are self-hosted. Editor
 text and suggestions remain in page/worker memory and are never put into model
-download requests or browser persistence.
+download requests or browser persistence. Its separate, session-only Gemma
+autocorrect toggle is also off by default and responds only to that page's
+virtual-key boundaries.
 
 ```bash
 cd web
@@ -79,11 +100,13 @@ Tapziq requires a 64-bit device running Android 8.0 or newer.
 3. Open **Tapziq Keyboard**, tap **Enable Tapziq Keyboard**, and enable it in
    Android's keyboard settings.
 4. Return to Tapziq, tap **Choose Tapziq Keyboard**, and select it.
-5. To use proofreading, tap **Download Gemma 4 E2B-it** in Tapziq and keep the
-   screen open until the download and checksum verification finish. You can
-   explicitly pause and later resume the transfer. Wi-Fi and at least 3 GB of
-   free space are recommended.
-6. Tap the test field and type.
+5. To use proofreading or Gemma autocorrect, tap **Download Gemma 4 E2B-it** in
+   Tapziq and keep the screen open until the download and checksum verification
+   finish. You can explicitly pause and later resume the transfer. Wi-Fi and at
+   least 3 GB of free space are recommended.
+6. Optional: turn on **Use local Gemma 4 autocorrect**. It remains off unless
+   you explicitly enable it.
+7. Tap the test field and type.
 
 Android intentionally requires the user to enable and select every downloaded
 keyboard. The app cannot bypass those system screens.

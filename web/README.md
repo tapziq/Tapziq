@@ -1,8 +1,9 @@
 # Tapziq Browser Keyboard
 
 Tapziq's browser edition is an installable progressive web app with an on-page
-virtual keyboard and a proofreading editor. After an explicit download, it runs
-the pinned **Gemma 4 E2B-it** web model locally through LiteRT-LM and WebGPU.
+virtual keyboard, manual proofreading, and optional autocorrect. After an
+explicit download, it runs the pinned **Gemma 4 E2B-it** web model locally
+through LiteRT-LM and WebGPU.
 
 ## Scope: a PWA, not a system keyboard
 
@@ -53,12 +54,17 @@ the browser profile may be able to inspect or delete site data. See
    be resumed. Tapziq checks every byte against the pinned SHA-256 before the
    model becomes usable.
 3. Type with the page's virtual keys or paste text into the editor.
-4. Select up to 500 UTF-16 code units, or leave the selection collapsed to use
-   the whole editor when it is no longer than 500 code units. Choose
-   **Proofread with browser Gemma 4**.
-5. Review the preview. Only **Apply** changes the editor; **Dismiss** and
-   **Cancel** leave it unchanged. If the source text or selection changed while
-   the model was working, Tapziq rejects the stale suggestion.
+4. Optional: turn on **Auto-correct with Gemma 4**. It is off by default and
+   triggers only after a virtual space, completion punctuation, or Enter. After
+   a short pause, Gemma checks recent text before the committed boundary. A
+   result is applied only when the complete editor snapshot and caret still
+   match; the last automatic change has a one-step **Undo**.
+5. For manual proofreading, select up to 500 UTF-16 code units, or leave the
+   selection collapsed to use the whole editor when it is no longer than 500
+   code units. Choose **Proofread with browser Gemma 4**.
+6. Review the manual preview. Only **Apply** changes the editor; **Dismiss** and
+   **Cancel** leave it unchanged. Manual and automatic checks both reject stale
+   results when the source text or selection changes.
 
 After the app shell, LiteRT-LM runtime, and verified model have all loaded once,
 proofreading can run without a network connection. An app update, missing

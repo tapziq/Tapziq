@@ -2,6 +2,7 @@ package com.tapziq.keyboard;
 
 import android.inputmethodservice.InputMethodService;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -20,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 
 public final class TapziqInputMethodService extends InputMethodService {
     private static final long RESULT_PROOFREAD_TIMEOUT_MS = TimeUnit.MINUTES.toMillis(2);
+    private static final long AUTOCORRECT_DELAY_MS = 600L;
     private KeyboardPanel keyboardPanel;
     private KeyboardLayouts.Mode mode = KeyboardLayouts.Mode.LETTERS;
     private boolean shifted;
@@ -30,11 +32,33 @@ public final class TapziqInputMethodService extends InputMethodService {
     private EditorIdentity proofreadEditor;
     private volatile Handler proofreadTimeoutHandler;
     private final Runnable proofreadTimeout = this::clearProofreadState;
+    private final Runnable pendingAutocorrect = this::startPendingAutocorrect;
+    private final SharedPreferences.OnSharedPreferenceChangeListener autocorrectSettingsListener =
+            (preferences, key) -> {
+                if (!AutocorrectSettings.isEnabledPreference(key)
+                        || AutocorrectSettings.isEnabled(this)) {
+                    return;
+                }
+                Handler handler = proofreadTimeoutHandler;
+                if (handler != null) {
+                    handler.post(this::disableAutocorrectImmediately);
+                }
+            };
+    private GemmaModelStore autocorrectModelStore;
+    private GemmaProofreader autocorrectProofreader;
+    private AutocorrectTarget autocorrectTarget;
+    private InputConnection autocorrectConnection;
+    private EditorInfo autocorrectEditorInfo;
+    private AutocorrectEdit autocorrectUndo;
+    private String pendingAutocorrectBoundary;
+    private int autocorrectOperationId;
+    private boolean showingAutocorrectNotice;
 
     @Override
     public void onCreate() {
         super.onCreate();
         proofreadTimeoutHandler = new Handler(Looper.getMainLooper());
+        AutocorrectSettings.registerListener(this, autocorrectSettingsListener);
         ProofreadSession.setListener(this::onProofreadSessionChanged);
     }
 
@@ -63,6 +87,8 @@ public final class TapziqInputMethodService extends InputMethodService {
     @Override
     public void onStartInputView(EditorInfo attribute, boolean restarting) {
         super.onStartInputView(attribute, restarting);
+        cancelAutocorrectRequest();
+        autocorrectUndo = null;
         editorInfo = attribute;
         mode = EditorBehavior.initialMode(attribute.inputType);
         shifted = shouldStartShifted(attribute);
@@ -85,12 +111,33 @@ public final class TapziqInputMethodService extends InputMethodService {
     @Override
     public void onFinishInput() {
         super.onFinishInput();
+        cancelAutocorrectRequest();
+        closeAutocorrectProofreader();
+        autocorrectUndo = null;
         editorInfo = null;
         mode = KeyboardLayouts.Mode.LETTERS;
         shifted = false;
         if (proofreadSessionId == 0) {
             clearProofreadState();
         }
+    }
+
+    @Override
+    public void onFinishInputView(boolean finishingInput) {
+        cancelAutocorrectRequest();
+        closeAutocorrectProofreader();
+        autocorrectUndo = null;
+        hideAutocorrectNotice();
+        super.onFinishInputView(finishingInput);
+    }
+
+    @Override
+    public void onWindowHidden() {
+        cancelAutocorrectRequest();
+        closeAutocorrectProofreader();
+        autocorrectUndo = null;
+        hideAutocorrectNotice();
+        super.onWindowHidden();
     }
 
     @Override
@@ -105,16 +152,27 @@ public final class TapziqInputMethodService extends InputMethodService {
     }
 
     private void handleKey(KeyboardLayouts.KeySpec key) {
+        if (key.action == KeyboardLayouts.Action.DELETE && undoLastAutocorrect()) {
+            return;
+        }
+        cancelAutocorrectRequest();
+        autocorrectUndo = null;
+        hideAutocorrectNotice();
+
         switch (key.action) {
             case TEXT:
-                commitText(key.text);
+                if (commitText(key.text) && AutocorrectTarget.isSupportedBoundary(key.text)) {
+                    scheduleAutocorrect(key.text);
+                }
                 if (mode == KeyboardLayouts.Mode.LETTERS && shifted) {
                     shifted = false;
                     renderKeyboard();
                 }
                 break;
             case SPACE:
-                commitText(" ");
+                if (commitText(" ")) {
+                    scheduleAutocorrect(" ");
+                }
                 break;
             case SHIFT:
                 shifted = !shifted;
@@ -124,7 +182,9 @@ public final class TapziqInputMethodService extends InputMethodService {
                 deleteBeforeCursor();
                 break;
             case ENTER:
-                pressEnter();
+                if (pressEnter()) {
+                    scheduleAutocorrect("\n");
+                }
                 break;
             case LETTERS:
                 mode = KeyboardLayouts.Mode.LETTERS;
@@ -152,11 +212,9 @@ public final class TapziqInputMethodService extends InputMethodService {
         }
     }
 
-    private void commitText(String text) {
+    private boolean commitText(String text) {
         InputConnection connection = getCurrentInputConnection();
-        if (connection != null) {
-            connection.commitText(text, 1);
-        }
+        return connection != null && connection.commitText(text, 1);
     }
 
     private void deleteBeforeCursor() {
@@ -176,27 +234,28 @@ public final class TapziqInputMethodService extends InputMethodService {
         }
     }
 
-    private void pressEnter() {
+    private boolean pressEnter() {
         InputConnection connection = getCurrentInputConnection();
         if (connection == null) {
-            return;
+            return false;
         }
 
         EditorInfo current = editorInfo != null ? editorInfo : getCurrentInputEditorInfo();
         if (current == null) {
             sendKey(connection, KeyEvent.KEYCODE_ENTER);
-            return;
+            return false;
         }
 
         int action = EditorBehavior.actionableImeAction(current.imeOptions);
         if (action != EditorInfo.IME_ACTION_NONE && connection.performEditorAction(action)) {
-            return;
+            return false;
         }
 
         if (EditorBehavior.isMultiline(current.inputType)) {
-            connection.commitText("\n", 1);
+            return connection.commitText("\n", 1);
         } else {
             sendKey(connection, KeyEvent.KEYCODE_ENTER);
+            return false;
         }
     }
 
@@ -206,7 +265,230 @@ public final class TapziqInputMethodService extends InputMethodService {
         connection.sendKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0));
     }
 
+    private void scheduleAutocorrect(String committedBoundary) {
+        Handler handler = proofreadTimeoutHandler;
+        if (handler == null
+                || !isInputViewShown()
+                || !AutocorrectSettings.isEnabled(this)
+                || !EditorBehavior.supportsProofreading(editorInfo)
+                || proofreadSessionId != 0
+                || proofreadSuggestion != null) {
+            return;
+        }
+        pendingAutocorrectBoundary = committedBoundary;
+        handler.removeCallbacks(pendingAutocorrect);
+        handler.postDelayed(pendingAutocorrect, AUTOCORRECT_DELAY_MS);
+    }
+
+    private void startPendingAutocorrect() {
+        String boundary = pendingAutocorrectBoundary;
+        pendingAutocorrectBoundary = null;
+        if (boundary == null
+                || !isInputViewShown()
+                || !AutocorrectSettings.isEnabled(this)
+                || !EditorBehavior.supportsProofreading(editorInfo)
+                || proofreadSessionId != 0
+                || proofreadSuggestion != null) {
+            return;
+        }
+
+        InputConnection connection = getCurrentInputConnection();
+        if (connection == null) {
+            return;
+        }
+        ExtractedText extracted = connection.getExtractedText(extractedTextRequest(), 0);
+        AutocorrectTarget.Capture capture = AutocorrectTarget.capture(extracted, boundary);
+        if (!capture.succeeded()) {
+            return;
+        }
+
+        if (autocorrectModelStore == null) {
+            Handler handler = proofreadTimeoutHandler;
+            if (handler == null) {
+                return;
+            }
+            autocorrectModelStore = new GemmaModelStore(this, handler::post);
+        }
+        java.io.File modelFile = autocorrectModelStore.readyModelFile();
+        if (modelFile == null) {
+            return;
+        }
+
+        EditorInfo sourceEditorInfo = editorInfo;
+        if (sourceEditorInfo == null) {
+            return;
+        }
+        if (autocorrectProofreader == null) {
+            Handler handler = proofreadTimeoutHandler;
+            if (handler == null) {
+                return;
+            }
+            autocorrectProofreader = new GemmaProofreader(handler::post, true);
+        }
+
+        autocorrectTarget = capture.target;
+        autocorrectConnection = connection;
+        autocorrectEditorInfo = sourceEditorInfo;
+        int operationId = autocorrectOperationId;
+        try {
+            autocorrectProofreader.autocorrect(
+                    modelFile,
+                    capture.target,
+                    new GemmaProofreader.InferenceCallback() {
+                        @Override
+                        public void onSuggestion(String suggestion) {
+                            applyAutocorrectResult(
+                                    operationId,
+                                    capture.target,
+                                    connection,
+                                    sourceEditorInfo,
+                                    suggestion
+                            );
+                        }
+
+                        @Override
+                        public void onFailure(Throwable error) {
+                            // Autocorrect is opportunistic. A safe no-op, cancellation,
+                            // unavailable model, or malformed output must never interrupt typing.
+                            finishAutocorrectRequest(operationId);
+                        }
+                    }
+            );
+        } catch (RuntimeException error) {
+            finishAutocorrectRequest(operationId);
+        }
+    }
+
+    private void applyAutocorrectResult(
+            int operationId,
+            AutocorrectTarget target,
+            InputConnection sourceConnection,
+            EditorInfo sourceEditorInfo,
+            String suggestion
+    ) {
+        if (operationId != autocorrectOperationId
+                || target != autocorrectTarget
+                || sourceConnection != autocorrectConnection
+                || sourceEditorInfo != autocorrectEditorInfo
+                || !isInputViewShown()
+                || !AutocorrectSettings.isEnabled(this)
+                || !EditorBehavior.supportsProofreading(editorInfo)
+                || proofreadSessionId != 0
+                || proofreadSuggestion != null) {
+            finishAutocorrectRequest(operationId);
+            return;
+        }
+
+        InputConnection connection = getCurrentInputConnection();
+        AutocorrectEdit.Validation validation = AutocorrectEdit.validate(target, suggestion);
+        if (connection == null
+                || connection != sourceConnection
+                || editorInfo != sourceEditorInfo
+                || !validation.succeeded()
+                || !EditorBehavior.supportsProofreading(editorInfo)) {
+            finishAutocorrectRequest(operationId);
+            return;
+        }
+
+        AutocorrectEdit edit = validation.edit;
+        AutocorrectApplier.Result result = AutocorrectApplier.apply(connection, edit);
+        finishAutocorrectRequest(operationId);
+        if (result == AutocorrectApplier.Result.APPLIED) {
+            autocorrectUndo = edit;
+            showingAutocorrectNotice = true;
+            if (keyboardPanel != null) {
+                keyboardPanel.showProofreadMessage(
+                        getString(R.string.autocorrect_applied),
+                        true
+                );
+            }
+        }
+    }
+
+    private boolean undoLastAutocorrect() {
+        AutocorrectEdit edit = autocorrectUndo;
+        if (edit == null) {
+            return false;
+        }
+        cancelAutocorrectRequest();
+        InputConnection connection = getCurrentInputConnection();
+        AutocorrectApplier.Result result = connection == null
+                ? AutocorrectApplier.Result.STALE
+                : AutocorrectApplier.undo(connection, edit);
+        autocorrectUndo = null;
+        if (result != AutocorrectApplier.Result.APPLIED) {
+            hideAutocorrectNotice();
+            return false;
+        }
+        showingAutocorrectNotice = true;
+        if (keyboardPanel != null) {
+            keyboardPanel.showProofreadMessage(
+                    getString(R.string.autocorrect_reverted),
+                    true
+            );
+        }
+        return true;
+    }
+
+    private void finishAutocorrectRequest(int operationId) {
+        if (operationId != autocorrectOperationId) {
+            return;
+        }
+        autocorrectTarget = null;
+        autocorrectConnection = null;
+        autocorrectEditorInfo = null;
+    }
+
+    private void cancelAutocorrectRequest() {
+        autocorrectOperationId++;
+        pendingAutocorrectBoundary = null;
+        Handler handler = proofreadTimeoutHandler;
+        if (handler != null) {
+            handler.removeCallbacks(pendingAutocorrect);
+        }
+        autocorrectTarget = null;
+        autocorrectConnection = null;
+        autocorrectEditorInfo = null;
+        if (autocorrectProofreader != null) {
+            autocorrectProofreader.cancel();
+        }
+    }
+
+    private void hideAutocorrectNotice() {
+        if (!showingAutocorrectNotice) {
+            return;
+        }
+        showingAutocorrectNotice = false;
+        if (keyboardPanel != null) {
+            keyboardPanel.hideProofreadMessage();
+        }
+    }
+
+    private void closeAutocorrectProofreader() {
+        GemmaProofreader proofreader = autocorrectProofreader;
+        autocorrectProofreader = null;
+        if (proofreader != null) {
+            proofreader.close();
+        }
+    }
+
+    private void disableAutocorrectImmediately() {
+        if (AutocorrectSettings.isEnabled(this)) {
+            return;
+        }
+        cancelAutocorrectRequest();
+        closeAutocorrectProofreader();
+        autocorrectUndo = null;
+        hideAutocorrectNotice();
+    }
+
     private void startProofread() {
+        if (proofreadSessionId != 0) {
+            return;
+        }
+        cancelAutocorrectRequest();
+        autocorrectUndo = null;
+        hideAutocorrectNotice();
         if (!EditorBehavior.supportsProofreading(editorInfo)) {
             showProofreadMessage(getString(R.string.proofread_secure_field));
             return;
@@ -239,6 +521,27 @@ public final class TapziqInputMethodService extends InputMethodService {
         proofreadSessionId = ProofreadSession.begin(proofreadTarget.text);
         keyboardPanel.showProofreadMessage(getString(R.string.proofread_opening), false);
 
+        int sessionId = proofreadSessionId;
+        GemmaProofreader proofreader = autocorrectProofreader;
+        autocorrectProofreader = null;
+        if (proofreader != null) {
+            proofreader.close(() -> launchProofreadActivity(sessionId));
+        } else {
+            launchProofreadActivity(sessionId);
+        }
+    }
+
+    private void launchProofreadActivity(int sessionId) {
+        if (sessionId == 0
+                || sessionId != proofreadSessionId
+                || !ProofreadSession.isActive(sessionId)
+                || !currentProofreadContextMatches()) {
+            if (sessionId == proofreadSessionId) {
+                ProofreadSession.cancel(sessionId);
+                showProofreadMessage(getString(R.string.proofread_text_changed));
+            }
+            return;
+        }
         Intent intent = new Intent(this, ProofreadActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                         | Intent.FLAG_ACTIVITY_NO_ANIMATION
@@ -258,6 +561,8 @@ public final class TapziqInputMethodService extends InputMethodService {
     @Override
     public void onStartInput(EditorInfo attribute, boolean restarting) {
         super.onStartInput(attribute, restarting);
+        cancelAutocorrectRequest();
+        autocorrectUndo = null;
         editorInfo = attribute;
     }
 
@@ -313,6 +618,7 @@ public final class TapziqInputMethodService extends InputMethodService {
                 proofreadEditor = null;
                 showProofreadMessage(getString(R.string.proofread_no_changes));
             } else {
+                showingAutocorrectNotice = false;
                 keyboardPanel.showSuggestion(result.suggestion);
                 scheduleProofreadExpiry(RESULT_PROOFREAD_TIMEOUT_MS);
             }
@@ -403,6 +709,7 @@ public final class TapziqInputMethodService extends InputMethodService {
 
     private ExtractedTextRequest extractedTextRequest() {
         ExtractedTextRequest request = new ExtractedTextRequest();
+        request.flags = InputConnection.GET_TEXT_WITH_STYLES;
         request.hintMaxChars = ProofreadTarget.MAX_SNAPSHOT_CHARACTERS + 1;
         request.hintMaxLines = 20;
         return request;
@@ -426,6 +733,7 @@ public final class TapziqInputMethodService extends InputMethodService {
         proofreadEditor = null;
         proofreadSuggestion = null;
         proofreadSessionId = 0;
+        showingAutocorrectNotice = false;
         if (keyboardPanel != null) {
             keyboardPanel.showProofreadMessage(message, true);
         }
@@ -440,6 +748,7 @@ public final class TapziqInputMethodService extends InputMethodService {
         proofreadEditor = null;
         proofreadSuggestion = null;
         proofreadSessionId = 0;
+        showingAutocorrectNotice = false;
         if (keyboardPanel != null) {
             keyboardPanel.hideProofreadMessage();
         }
@@ -495,6 +804,14 @@ public final class TapziqInputMethodService extends InputMethodService {
     @Override
     public void onDestroy() {
         ProofreadSession.setListener(null);
+        AutocorrectSettings.unregisterListener(this, autocorrectSettingsListener);
+        cancelAutocorrectRequest();
+        closeAutocorrectProofreader();
+        if (autocorrectModelStore != null) {
+            autocorrectModelStore.close();
+            autocorrectModelStore = null;
+        }
+        autocorrectUndo = null;
         clearProofreadState();
         ProofreadSession.clear();
         cancelProofreadExpiry();

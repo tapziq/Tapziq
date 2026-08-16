@@ -21,6 +21,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 
 import java.io.File;
@@ -171,6 +172,30 @@ public final class MainActivity extends Activity {
         modelRemoveParams.topMargin = dp(8);
         modelRemoveParams.bottomMargin = dp(22);
         content.addView(modelRemoveButton, modelRemoveParams);
+
+        content.addView(sectionTitle(getString(R.string.autocorrect_title)));
+        TextView autocorrectBody = text(
+                getString(R.string.autocorrect_body),
+                15,
+                R.color.secondary_text,
+                Typeface.NORMAL
+        );
+        LinearLayout.LayoutParams autocorrectBodyParams = wrapParams();
+        autocorrectBodyParams.topMargin = dp(7);
+        content.addView(autocorrectBody, autocorrectBodyParams);
+
+        @SuppressWarnings("deprecation")
+        Switch autocorrectSwitch = new Switch(this);
+        autocorrectSwitch.setText(R.string.autocorrect_switch);
+        autocorrectSwitch.setTextColor(getColor(R.color.primary_text));
+        autocorrectSwitch.setTextSize(16f);
+        autocorrectSwitch.setChecked(AutocorrectSettings.isEnabled(this));
+        autocorrectSwitch.setOnCheckedChangeListener((button, enabled) ->
+                AutocorrectSettings.setEnabled(this, enabled));
+        LinearLayout.LayoutParams autocorrectParams = matchParams();
+        autocorrectParams.topMargin = dp(9);
+        autocorrectParams.bottomMargin = dp(22);
+        content.addView(autocorrectSwitch, autocorrectParams);
 
         content.addView(sectionTitle(getString(R.string.privacy_title)));
         TextView privacy = text(

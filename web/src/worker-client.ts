@@ -129,6 +129,8 @@ export class FakeModelClient implements BrowserModelClient {
   #ready = true;
   #cancelled = false;
 
+  constructor(private readonly delayMs = 20) {}
+
   async probe(): Promise<CapabilityReport> {
     return {
       secureContext: true,
@@ -159,13 +161,14 @@ export class FakeModelClient implements BrowserModelClient {
 
   async proofread(text: string): Promise<ProofreadWorkerResult> {
     this.#cancelled = false;
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, this.delayMs));
     if (this.#cancelled) {
       throw new DOMException("Operation cancelled.", "AbortError");
     }
     const suggestion = text
       .replace(/\bthiss\b/giu, "This")
       .replace(/\bgrammer\b/giu, "grammar")
+      .replace(/\bcant\b/giu, "can't")
       .replace(/\bteh\b/giu, "the");
     return suggestion === text ? { kind: "no-change" } : { kind: "suggestion", suggestion };
   }

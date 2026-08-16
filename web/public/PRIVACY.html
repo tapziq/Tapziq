@@ -16,7 +16,7 @@
     <header>
       <p class="eyebrow">Browser-only edition</p>
       <h1>Tapziq browser privacy</h1>
-      <p class="lede">Last updated: August 15, 2026</p>
+      <p class="lede">Last updated: August 16, 2026</p>
       <nav aria-label="Browser edition documents">
         <a href="./">Open app</a>
         <a href="./README.html">Overview</a>
@@ -49,9 +49,10 @@
         <h2 id="text">Text and proofreading</h2>
         <ul>
           <li>Text entered or pasted into the editor remains in volatile page and dedicated-worker memory.</li>
-          <li>Only after <strong>Proofread</strong> does Tapziq pass the selected passage—or an eligible whole editor—to the local worker. The limit is 500 UTF-16 code units.</li>
-          <li>The result remains in memory and appears as a preview. Only <strong>Apply</strong> changes the editor. <strong>Dismiss</strong> and <strong>Cancel</strong> do not.</li>
-          <li>Tapziq rejects the result if the original text or selection has changed.</li>
+          <li>Manual proofreading passes at most 500 UTF-16 code units from the selected passage—or an eligible whole editor—to the local worker only after <strong>Proofread</strong>.</li>
+          <li><strong>Auto-correct with Gemma 4</strong> is off by default. When enabled, only a virtual space, completion-punctuation, or Enter key can schedule a local check of at most 500 recent UTF-16 code units; the newly committed boundary is excluded.</li>
+          <li>Manual results remain in memory as a preview and change text only after <strong>Apply</strong>. Automatic results apply directly only if the complete editor text and post-boundary caret exactly match the captured snapshot, then offer one-step <strong>Undo</strong>.</li>
+          <li>Tapziq cancels or discards stale automatic work and rejects stale manual results. <strong>Dismiss</strong> and <strong>Cancel</strong> do not change editor text.</li>
           <li>Tapziq application code does not persist editor contents, selections, prompts, model responses, typing history, or clipboard contents.</li>
           <li>Native browser spellcheck, autocomplete, and autocapitalize are disabled on the editor. Tapziq does not request clipboard permission.</li>
         </ul>
