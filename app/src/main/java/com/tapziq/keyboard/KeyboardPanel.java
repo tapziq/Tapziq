@@ -57,13 +57,7 @@ final class KeyboardPanel extends LinearLayout {
                 || applyButton == null || dismissButton == null) {
             return;
         }
-        setProofreadBarVisible(true);
-        suggestionText.setText(suggestion);
-        suggestionText.setTextColor(getContext().getColor(R.color.key_text));
-        suggestionText.setContentDescription("Proofreading suggestion: " + suggestion);
-        applyButton.setVisibility(VISIBLE);
-        applyButton.setEnabled(true);
-        dismissButton.setVisibility(VISIBLE);
+        restoreProofreadBar();
     }
 
     void showProofreadMessage(String message, boolean showDismiss) {
@@ -74,13 +68,7 @@ final class KeyboardPanel extends LinearLayout {
                 || applyButton == null || dismissButton == null) {
             return;
         }
-        setProofreadBarVisible(true);
-        suggestionText.setText(message);
-        suggestionText.setTextColor(getContext().getColor(R.color.key_text));
-        suggestionText.setContentDescription(message);
-        applyButton.setVisibility(GONE);
-        applyButton.setEnabled(false);
-        dismissButton.setVisibility(showDismiss ? VISIBLE : GONE);
+        restoreProofreadBar();
     }
 
     void hideProofreadMessage() {
@@ -183,6 +171,7 @@ final class KeyboardPanel extends LinearLayout {
         suggestionText.setGravity(Gravity.CENTER_VERTICAL);
         suggestionText.setPadding(dp(10), 0, dp(10), 0);
         suggestionText.setSingleLine(true);
+        suggestionText.setTypeface(android.graphics.Typeface.MONOSPACE);
         scroller.addView(suggestionText, new HorizontalScrollView.LayoutParams(
                 LayoutParams.WRAP_CONTENT,
                 LayoutParams.MATCH_PARENT
@@ -214,11 +203,15 @@ final class KeyboardPanel extends LinearLayout {
             return;
         }
         setProofreadBarVisible(true);
-        suggestionText.setText(visibleProofreadText);
+        String previewText = visibleSuggestion
+                ? ProofreadPreview.visibleText(visibleProofreadText)
+                : visibleProofreadText;
+        suggestionText.setText(previewText);
         suggestionText.setTextColor(getContext().getColor(R.color.key_text));
         suggestionText.setContentDescription(
                 visibleSuggestion
-                        ? "Proofreading suggestion: " + visibleProofreadText
+                        ? "Proofreading suggestion. Line breaks are shown as return arrows and "
+                                + "tabs as tab arrows: " + previewText
                         : visibleProofreadText
         );
         applyButton.setVisibility(visibleSuggestion ? VISIBLE : GONE);
@@ -275,7 +268,7 @@ final class KeyboardPanel extends LinearLayout {
             case NEXT_IME:
                 return "Switch keyboard";
             case PROOFREAD:
-                return "Proofread with on-device Gemini Nano";
+                return "Proofread with local Gemma 4";
             case TEXT:
             default:
                 return key.label;

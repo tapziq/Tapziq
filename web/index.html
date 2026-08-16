@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#315cf5">
+    <meta name="referrer" content="no-referrer">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:* https://huggingface.co https://*.hf.co; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    >
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="icon" href="./icons/tapziq.svg" type="image/svg+xml">
+    <title>Tapziq Browser Keyboard</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="hero">
+        <img src="./icons/tapziq.svg" alt="" width="64" height="64">
+        <div>
+          <p class="eyebrow">Browser-only edition</p>
+          <h1>Tapziq Keyboard</h1>
+          <p>Gemma 4 proofreading that stays inside this browser origin.</p>
+        </div>
+      </header>
+
+      <section class="boundary-card" aria-labelledby="boundary-title">
+        <div>
+          <p class="eyebrow">Privacy boundary</p>
+          <h2 id="boundary-title">Browser-managed, origin-private</h2>
+        </div>
+        <p>
+          The model is downloaded only when you ask, verified, and stored in this browser's
+          private origin storage. Editor text is sent only to the local WebGPU worker. This
+          virtual keyboard works on this page; browsers cannot install it as Android's
+          system-wide keyboard.
+        </p>
+      </section>
+
+      <section class="workspace" aria-labelledby="editor-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Private editor</p>
+            <h2 id="editor-title">Type or paste text</h2>
+          </div>
+          <span id="character-count" class="count">0 / 2,000</span>
+        </div>
+        <textarea
+          id="editor"
+          aria-labelledby="editor-title"
+          maxlength="2000"
+          rows="8"
+          spellcheck="false"
+          autocomplete="off"
+          autocapitalize="off"
+          aria-describedby="editor-help"
+          placeholder="Type here. Select up to 500 characters, or proofread the whole field."
+        ></textarea>
+        <p id="editor-help" class="supporting-text">
+          Native browser spellcheck and autocorrect are disabled for this editor.
+        </p>
+
+        <div id="preview" class="preview" hidden>
+          <div>
+            <p class="eyebrow">Preview only</p>
+            <h3>Gemma suggests</h3>
+          </div>
+          <pre id="preview-text"></pre>
+          <div class="button-row">
+            <button id="apply-button" class="primary" type="button">Apply</button>
+            <button id="dismiss-button" class="secondary" type="button">Dismiss</button>
+          </div>
+        </div>
+
+        <div id="keyboard" class="keyboard" aria-label="Tapziq virtual keyboard"></div>
+        <div class="proofread-actions">
+          <button id="proofread-button" class="primary wide" type="button" disabled>
+            Proofread with browser Gemma 4
+          </button>
+          <button id="cancel-proofread-button" class="secondary" type="button" hidden>
+            Cancel
+          </button>
+        </div>
+      </section>
+
+      <section class="model-card" aria-labelledby="model-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Local model</p>
+            <h2 id="model-title">Gemma 4 E2B-it for WebGPU</h2>
+          </div>
+          <span id="model-badge" class="badge">Checking…</span>
+        </div>
+        <p>
+          Exact web artifact: 2,008,432,640 bytes (about 2.01 GB). The browser may require
+          additional temporary storage and roughly 1.8 GB of GPU memory.
+        </p>
+        <progress id="download-progress" max="2008432640" value="0" hidden></progress>
+        <p id="download-detail" class="supporting-text" hidden></p>
+        <div class="button-row">
+          <button id="download-button" class="primary" type="button" disabled>
+            Download verified model
+          </button>
+          <button id="cancel-download-button" class="secondary" type="button" hidden>
+            Pause download
+          </button>
+          <button id="remove-button" class="danger" type="button" hidden>
+            Remove browser model
+          </button>
+        </div>
+        <details>
+          <summary>Exact pinned artifact</summary>
+          <dl class="metadata">
+            <div><dt>Revision</dt><dd><code>6b78abd019e61a1ca4cbe3b212d2c9ce8ff38a94</code></dd></div>
+            <div><dt>SHA-256</dt><dd><code>3a08e8d94e23b814ae5414469c370c503813949acb8ceaa17e4ebf8a35af35b5</code></dd></div>
+            <div><dt>Runtime</dt><dd><code>@litert-lm/core 0.15.0</code></dd></div>
+          </dl>
+        </details>
+      </section>
+
+      <section class="status-card" aria-live="polite" aria-atomic="true">
+        <span class="status-dot" aria-hidden="true"></span>
+        <p id="status">Checking browser capabilities…</p>
+      </section>
+
+      <footer>
+        <a href="./PRIVACY.html">Browser privacy</a>
+        <a href="./THIRD_PARTY_NOTICES.html">Third-party notices</a>
+      </footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

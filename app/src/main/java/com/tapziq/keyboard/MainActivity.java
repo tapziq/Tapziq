@@ -1,12 +1,15 @@
 package com.tapziq.keyboard;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.text.InputType;
 import android.view.View;
@@ -16,17 +19,29 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.List;
+import java.util.Locale;
 
 public final class MainActivity extends Activity {
     private TextView statusView;
+    private TextView modelStatusView;
+    private ProgressBar modelProgressView;
+    private Button modelActionButton;
+    private Button modelRemoveButton;
+    private GemmaModelStore modelStore;
+    private boolean modelOperationActive;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        Handler mainHandler = new Handler(Looper.getMainLooper());
+        modelStore = new GemmaModelStore(this, mainHandler::post);
 
         ScrollView scrollView = new ScrollView(this);
         scrollView.setFillViewport(true);
@@ -111,6 +126,52 @@ public final class MainActivity extends Activity {
         fieldParams.bottomMargin = dp(24);
         content.addView(testField, fieldParams);
 
+        content.addView(sectionTitle(getString(R.string.model_title)));
+        TextView modelBody = text(
+                getString(R.string.model_body),
+                15,
+                R.color.secondary_text,
+                Typeface.NORMAL
+        );
+        LinearLayout.LayoutParams modelBodyParams = wrapParams();
+        modelBodyParams.topMargin = dp(7);
+        modelBodyParams.bottomMargin = dp(10);
+        content.addView(modelBody, modelBodyParams);
+
+        modelStatusView = text("", 14, R.color.primary_text, Typeface.BOLD);
+        content.addView(modelStatusView, matchParams());
+
+        modelProgressView = new ProgressBar(
+                this,
+                null,
+                android.R.attr.progressBarStyleHorizontal
+        );
+        modelProgressView.setMax(1_000);
+        modelProgressView.setVisibility(View.GONE);
+        LinearLayout.LayoutParams modelProgressParams = matchParams();
+        modelProgressParams.topMargin = dp(8);
+        content.addView(modelProgressView, modelProgressParams);
+
+        modelActionButton = secondaryButton(getString(R.string.model_download));
+        modelActionButton.setOnClickListener(view -> {
+            if (modelOperationActive) {
+                pauseModelDownload();
+            } else {
+                confirmModelDownload();
+            }
+        });
+        LinearLayout.LayoutParams modelActionParams = buttonParams();
+        modelActionParams.topMargin = dp(10);
+        content.addView(modelActionButton, modelActionParams);
+
+        modelRemoveButton = secondaryButton(getString(R.string.model_remove));
+        modelRemoveButton.setOnClickListener(view -> confirmModelRemoval());
+        modelRemoveButton.setVisibility(View.GONE);
+        LinearLayout.LayoutParams modelRemoveParams = buttonParams();
+        modelRemoveParams.topMargin = dp(8);
+        modelRemoveParams.bottomMargin = dp(22);
+        content.addView(modelRemoveButton, modelRemoveParams);
+
         content.addView(sectionTitle(getString(R.string.privacy_title)));
         TextView privacy = text(
                 getString(R.string.privacy_body),
@@ -139,6 +200,18 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         updateStatus();
+        if (!modelOperationActive) {
+            updateModelStatus();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (modelStore != null) {
+            modelStore.close();
+            modelStore = null;
+        }
+        super.onDestroy();
     }
 
     private void updateStatus() {
@@ -152,6 +225,148 @@ public final class MainActivity extends Activity {
         } else {
             statusView.setText(R.string.status_not_enabled);
         }
+    }
+
+    private void updateModelStatus() {
+        if (modelStore == null || modelStatusView == null) {
+            return;
+        }
+        GemmaModelStore.State state = modelStore.state();
+        modelProgressView.setVisibility(View.GONE);
+        modelProgressView.setIndeterminate(false);
+        modelActionButton.setEnabled(!state.ready);
+        modelRemoveButton.setVisibility(
+                state.hasStoredData ? View.VISIBLE : View.GONE
+        );
+        if (state.ready) {
+            modelStatusView.setText(R.string.model_ready);
+            modelActionButton.setText(R.string.model_ready_button);
+        } else if (state.downloadedBytes > 0L) {
+            modelStatusView.setText(getString(
+                    R.string.model_partial,
+                    formatBytes(state.downloadedBytes),
+                    formatBytes(GemmaModelStore.MODEL_SIZE_BYTES)
+            ));
+            modelActionButton.setText(R.string.model_resume);
+        } else {
+            modelStatusView.setText(R.string.model_not_downloaded);
+            modelActionButton.setText(R.string.model_download);
+        }
+    }
+
+    private void confirmModelDownload() {
+        if (modelOperationActive || modelStore == null) {
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.model_download_title)
+                .setMessage(R.string.model_download_confirm)
+                .setPositiveButton(R.string.model_download, (dialog, which) -> startModelDownload())
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void startModelDownload() {
+        if (modelStore == null) {
+            return;
+        }
+        modelOperationActive = true;
+        modelActionButton.setEnabled(true);
+        modelActionButton.setText(R.string.model_pause);
+        modelRemoveButton.setEnabled(false);
+        modelProgressView.setVisibility(View.VISIBLE);
+        modelProgressView.setIndeterminate(false);
+        modelStore.download(new GemmaModelStore.Listener() {
+            @Override
+            public void onProgress(
+                    GemmaModelStore.Phase phase,
+                    long downloadedBytes,
+                    long totalBytes
+            ) {
+                if (phase == GemmaModelStore.Phase.VERIFYING) {
+                    modelProgressView.setIndeterminate(true);
+                    modelStatusView.setText(R.string.model_verifying);
+                    return;
+                }
+                modelProgressView.setIndeterminate(false);
+                int progress = (int) Math.min(
+                        1_000L,
+                        downloadedBytes * 1_000L / totalBytes
+                );
+                modelProgressView.setProgress(progress);
+                modelStatusView.setText(getString(
+                        R.string.model_downloading,
+                        formatBytes(downloadedBytes),
+                        formatBytes(totalBytes)
+                ));
+            }
+
+            @Override
+            public void onReady(File modelFile) {
+                modelOperationActive = false;
+                modelRemoveButton.setEnabled(true);
+                updateModelStatus();
+            }
+
+            @Override
+            public void onFailure(Throwable error) {
+                modelOperationActive = false;
+                modelProgressView.setVisibility(View.GONE);
+                modelActionButton.setEnabled(true);
+                modelRemoveButton.setEnabled(true);
+                GemmaModelStore.State state = modelStore.state();
+                modelRemoveButton.setVisibility(
+                        state.hasStoredData ? View.VISIBLE : View.GONE
+                );
+                modelActionButton.setText(
+                        state.downloadedBytes > 0L
+                                ? R.string.model_resume
+                                : R.string.model_download
+                );
+                modelStatusView.setText(
+                        error instanceof GemmaModelStore.NotEnoughSpaceException
+                                ? R.string.model_no_space
+                                : R.string.model_download_failed
+                );
+            }
+        });
+    }
+
+    private void pauseModelDownload() {
+        if (!modelOperationActive || modelStore == null) {
+            return;
+        }
+        modelStore.cancel();
+        modelOperationActive = false;
+        modelRemoveButton.setEnabled(true);
+        updateModelStatus();
+    }
+
+    private void confirmModelRemoval() {
+        if (modelOperationActive || modelStore == null) {
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.model_remove_title)
+                .setMessage(R.string.model_remove_confirm)
+                .setPositiveButton(R.string.model_remove, (dialog, which) -> {
+                    try {
+                        modelStore.removeModel();
+                        updateModelStatus();
+                    } catch (IOException error) {
+                        modelStatusView.setText(
+                                error instanceof GemmaModelStore.ModelBusyException
+                                        ? R.string.model_in_use
+                                        : R.string.model_remove_failed
+                        );
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private static String formatBytes(long bytes) {
+        return String.format(Locale.US, "%.2f GB", bytes / 1_000_000_000.0);
     }
 
     private boolean isKeyboardEnabled() {

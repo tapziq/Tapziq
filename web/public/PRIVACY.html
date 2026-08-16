@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="referrer" content="no-referrer">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'"
+    >
+    <title>Tapziq Browser Privacy</title>
+    <link rel="stylesheet" href="./docs.css">
+  </head>
+  <body>
+    <header>
+      <p class="eyebrow">Browser-only edition</p>
+      <h1>Tapziq browser privacy</h1>
+      <p class="lede">Last updated: August 15, 2026</p>
+      <nav aria-label="Browser edition documents">
+        <a href="./">Open app</a>
+        <a href="./README.html">Overview</a>
+        <strong aria-current="page">Privacy</strong>
+        <a href="./THIRD_PARTY_NOTICES.html">Third-party notices</a>
+      </nav>
+    </header>
+
+    <main>
+      <section aria-labelledby="short">
+        <h2 id="short">Short version</h2>
+        <div class="boundary">
+          Tapziq's browser application code does not send editor text, selections, or Gemma suggestions
+          to a Tapziq server or another inference service. Proofreading runs locally in a dedicated browser
+          worker with the downloaded Gemma 4 E2B-it model and WebGPU.
+        </div>
+        <p>
+          The on-page virtual keyboard works only in Tapziq's own editor. It is not an Android system
+          keyboard and cannot access text in other apps, sites, fields, or tabs. The native Android keyboard
+          has a different platform boundary and is not covered by this document.
+        </p>
+        <p>
+          The app and model still require ordinary network requests for initial setup and updates. Those
+          requests reveal normal connection metadata to their hosts, but Tapziq does not put editor text in
+          them.
+        </p>
+      </section>
+
+      <section aria-labelledby="text">
+        <h2 id="text">Text and proofreading</h2>
+        <ul>
+          <li>Text entered or pasted into the editor remains in volatile page and dedicated-worker memory.</li>
+          <li>Only after <strong>Proofread</strong> does Tapziq pass the selected passage—or an eligible whole editor—to the local worker. The limit is 500 UTF-16 code units.</li>
+          <li>The result remains in memory and appears as a preview. Only <strong>Apply</strong> changes the editor. <strong>Dismiss</strong> and <strong>Cancel</strong> do not.</li>
+          <li>Tapziq rejects the result if the original text or selection has changed.</li>
+          <li>Tapziq application code does not persist editor contents, selections, prompts, model responses, typing history, or clipboard contents.</li>
+          <li>Native browser spellcheck, autocomplete, and autocapitalize are disabled on the editor. Tapziq does not request clipboard permission.</li>
+        </ul>
+        <p>
+          Closing or reloading the page discards editor state maintained by Tapziq's code. A browser or
+          operating system may independently retain process memory, session restoration data, swap, crash
+          reports, or other artifacts outside Tapziq's application-level controls.
+        </p>
+      </section>
+
+      <section aria-labelledby="storage">
+        <h2 id="storage">Model and app storage</h2>
+        <p>After explicit confirmation, Tapziq stores these items for the PWA's browser origin:</p>
+        <ul>
+          <li><code>gemma-4-E2B-it-web.litertlm</code>, including a partial paused download, in OPFS;</li>
+          <li>verification metadata containing the filename, pinned revision, byte count, SHA-256, LiteRT-LM version, modification time, and verification time; and</li>
+          <li>the app shell, worker, self-hosted LiteRT-LM WebAssembly/runtime, manifest, styles, and icon in the service-worker cache.</li>
+        </ul>
+        <p>
+          Tapziq asks the browser for persistent storage before downloading. A grant is not guaranteed.
+          The browser may evict non-persistent data, and the user can clear site data at any time.
+        </p>
+        <p>
+          This is browser-managed, origin-scoped storage. It is separate from native Android private files
+          and does not use Gemini Nano, Android AICore, or ML Kit. Other websites ordinarily cannot read
+          another origin's OPFS or cache. That boundary does not prevent access by the browser, operating
+          system, sufficiently privileged extensions or administrators, developer tools, malware, or anyone
+          controlling the browser profile or device.
+        </p>
+      </section>
+
+      <section aria-labelledby="network">
+        <h2 id="network">Network activity</h2>
+        <ol>
+          <li><strong>Tapziq app origin:</strong> loads or updates HTML, JavaScript, CSS, icon, manifest, service worker, and self-hosted LiteRT-LM WebAssembly/runtime.</li>
+          <li><strong>Hugging Face model hosting:</strong> after download confirmation, retrieves or resumes the exact pinned model. The request omits credentials, bypasses HTTP cache, and sends no referrer.</li>
+        </ol>
+        <p>
+          These hosts can receive normal HTTP and transport metadata such as IP address, time, path,
+          response size, and browser or network headers. Hosting providers may retain access or security
+          logs under their policies. Tapziq source does not add editor text, suggestions, or prompts to any
+          request URL, header, or body.
+        </p>
+        <p>
+          Once the current shell, runtime, and verified model are present, inference needs no network
+          request. Tapziq contains no account system, advertising SDK, analytics SDK, telemetry endpoint,
+          or remote inference client, and its application code does not write cookies.
+        </p>
+      </section>
+
+      <section aria-labelledby="removal">
+        <h2 id="removal">Removal and user controls</h2>
+        <ul>
+          <li><strong>Remove browser model</strong> deletes the complete or partial model and verification metadata from OPFS.</li>
+          <li>The browser's site-data controls remove the model, app cache, service worker, and other origin data together.</li>
+          <li>Uninstalling the PWA does not clear site data in every browser. Use the site-data control when deletion matters.</li>
+          <li>Closing the page clears Tapziq's in-memory editor and suggestion, subject to the browser and operating-system caveats above.</li>
+        </ul>
+        <p>These controls are commonly named <strong>Site settings</strong>, <strong>Storage</strong>, <strong>Clear data</strong>, or <strong>Delete site data</strong>.</p>
+      </section>
+
+      <section aria-labelledby="scope-note">
+        <h2 id="scope-note">Scope and changes</h2>
+        <p>
+          This statement covers the source behavior of the browser edition. A deployment operator can still
+          observe normal requests to its host, while browser extensions and modified builds can change the
+          boundary. Review the deployed origin and browser permissions when that distinction matters.
+        </p>
+        <p>Material privacy changes should update this page and its date.</p>
+      </section>
+    </main>
+
+    <footer>
+      This is a standalone, script-free copy designed to remain readable when saved and opened offline.
+      See the <a href="./README.html">overview</a> and
+      <a href="./THIRD_PARTY_NOTICES.html">third-party notices</a>.
+    </footer>
+  </body>
+</html>

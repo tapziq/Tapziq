@@ -143,7 +143,7 @@ final class KeyboardLayouts {
 
     private static List<KeySpec> proofreadRow() {
         List<KeySpec> row = new ArrayList<>();
-        row.add(action("Proofread with Gemini Nano", Action.PROOFREAD, 1f));
+        row.add(action("Proofread with Gemma 4", Action.PROOFREAD, 1f));
         return row;
     }
 

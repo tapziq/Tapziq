@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="referrer" content="no-referrer">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'"
+    >
+    <title>Tapziq Browser Keyboard — Overview</title>
+    <link rel="stylesheet" href="./docs.css">
+  </head>
+  <body>
+    <header>
+      <p class="eyebrow">Browser-only edition</p>
+      <h1>Tapziq Browser Keyboard</h1>
+      <p class="lede">An installable PWA with an on-page virtual keyboard and local Gemma 4 proofreading.</p>
+      <nav aria-label="Browser edition documents">
+        <a href="./">Open app</a>
+        <strong aria-current="page">Overview</strong>
+        <a href="./PRIVACY.html">Privacy</a>
+        <a href="./THIRD_PARTY_NOTICES.html">Third-party notices</a>
+      </nav>
+    </header>
+
+    <main>
+      <section aria-labelledby="scope">
+        <h2 id="scope">A PWA, not a system keyboard</h2>
+        <p>
+          The virtual keyboard edits only the text area inside the Tapziq page. A web app cannot register
+          itself as Android's <code>InputMethodService</code>, replace the selected Android keyboard, or read
+          and edit fields in other apps, sites, or browser tabs. The native Android Tapziq keyboard is a
+          separate application and architecture.
+        </p>
+        <div class="boundary">
+          <strong>Exact boundary:</strong> this browser edition does not call Gemini Nano, Android AICore,
+          ML Kit, or a remote inference API. It downloads the web-specific Gemma 4 E2B-it artifact into
+          storage managed by this browser for the Tapziq origin and performs inference in a dedicated
+          WebGPU worker.
+        </div>
+      </section>
+
+      <section aria-labelledby="managed">
+        <h2 id="managed">What “browser-managed” means</h2>
+        <table>
+          <thead><tr><th>Component</th><th>Location and lifetime</th></tr></thead>
+          <tbody>
+            <tr>
+              <th>App and runtime</th>
+              <td>Served by the Tapziq origin and cached there by the service worker. LiteRT-LM runtime files are self-hosted, not loaded from a CDN during inference.</td>
+            </tr>
+            <tr>
+              <th>Gemma model</th>
+              <td>Downloaded only after confirmation, written to the browser origin's OPFS, and accepted only after its size and SHA-256 match the pinned artifact.</td>
+            </tr>
+            <tr>
+              <th>Editor and suggestion</th>
+              <td>Kept in volatile page and worker memory. Tapziq application code does not persist them in OPFS, Cache Storage, local storage, cookies, or a server.</td>
+            </tr>
+            <tr>
+              <th>Inference</th>
+              <td>Runs locally in a dedicated browser worker with WebGPU. Tapziq has no inference backend.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          Browser-managed is a technical storage and execution boundary. It is not a claim that the browser
+          is an impenetrable vault or that ownership of third-party software or model weights changes. The
+          browser, operating system, sufficiently privileged extensions or administrators, developer tools,
+          malware, and anyone controlling the profile or device may be able to inspect or delete site data.
+        </p>
+      </section>
+
+      <section aria-labelledby="requirements">
+        <h2 id="requirements">Requirements</h2>
+        <ul>
+          <li>A secure HTTPS origin or <code>localhost</code>; <code>file://</code> is unsupported.</li>
+          <li>A current browser with WebGPU, a GPU adapter, OPFS, and Web Locks. LiteRT-LM's web API is an early preview.</li>
+          <li>2,008,432,640 bytes for the model plus 512 MiB of free browser quota during setup.</li>
+          <li>A suitable GPU. A published M4 Max WebGPU benchmark reports roughly 1.8 GB of GPU memory; actual devices differ.</li>
+          <li>Browser permission to retain enough site data. Persistent storage is requested but not guaranteed.</li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="use">
+        <h2 id="use">Use and user control</h2>
+        <ol>
+          <li>While online, choose <strong>Download verified model</strong> and confirm the displayed remaining size.</li>
+          <li>Leave the page open for the download. A paused partial file can be resumed. Tapziq verifies every byte before enabling the model.</li>
+          <li>Type with the on-page keys or paste into the editor.</li>
+          <li>Select at most 500 UTF-16 code units, or use the whole editor when it is at most 500, then choose <strong>Proofread with browser Gemma 4</strong>.</li>
+          <li>Review the preview. Only <strong>Apply</strong> changes text; <strong>Dismiss</strong> and <strong>Cancel</strong> do not. Stale suggestions are rejected.</li>
+        </ol>
+        <p>
+          Once the app shell, runtime, and verified model have loaded, proofreading can run offline. An app
+          update, missing cache entry, removed model, cleared site data, or browser eviction requires network
+          access again.
+        </p>
+        <p>
+          <strong>Remove browser model</strong> deletes the complete or partial model and its verification
+          metadata. Use the browser's site-data controls to delete the app cache and all other origin data.
+          Uninstalling a PWA alone does not clear site storage in every browser.
+        </p>
+      </section>
+
+      <section aria-labelledby="pinned">
+        <h2 id="pinned">Pinned artifact</h2>
+        <ul class="metadata">
+          <li>Repository: <a href="https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm" rel="noreferrer">litert-community/gemma-4-E2B-it-litert-lm</a></li>
+          <li>File: <code>gemma-4-E2B-it-web.litertlm</code></li>
+          <li>Revision: <code>6b78abd019e61a1ca4cbe3b212d2c9ce8ff38a94</code></li>
+          <li>Size: <code>2,008,432,640</code> bytes</li>
+          <li>SHA-256: <code>3a08e8d94e23b814ae5414469c370c503813949acb8ceaa17e4ebf8a35af35b5</code></li>
+          <li>Runtime: <code>@litert-lm/core 0.15.0</code></li>
+        </ul>
+        <p>
+          The model is not bundled with the app. The browser fetches it directly from the immutable
+          Hugging Face revision with credentials omitted and no referrer, then verifies it locally.
+        </p>
+      </section>
+    </main>
+
+    <footer>
+      This is a standalone, script-free copy designed to remain readable when saved and opened offline.
+      See <a href="./PRIVACY.html">privacy</a> and <a href="./THIRD_PARTY_NOTICES.html">third-party notices</a>.
+    </footer>
+  </body>
+</html>
