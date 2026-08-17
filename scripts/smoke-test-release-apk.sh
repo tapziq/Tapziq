@@ -125,7 +125,20 @@ PY
 }
 
 field_coordinates=""
-for attempt in 1 2 3 4 5; do
+display_dimensions="$(
+  adb shell dumpsys window displays | tr -d '\r' \
+    | sed -n 's/.* cur=\([0-9][0-9]*\)x\([0-9][0-9]*\) .*/\1 \2/p' \
+    | head -n 1
+)"
+[[ "$display_dimensions" =~ ^([1-9][0-9]*)\ ([1-9][0-9]*)$ ]] || \
+  fail "Could not determine the current display dimensions."
+display_width="${BASH_REMATCH[1]}"
+display_height="${BASH_REMATCH[2]}"
+scroll_x=$((display_width / 2))
+scroll_start_y=$((display_height * 3 / 4))
+scroll_end_y=$((display_height / 4))
+
+for attempt in 1 2 3 4 5 6 7 8; do
   dump_ui
   if field_coordinates="$(node_bounds resource-id "$test_field_id")"; then
     break
@@ -141,10 +154,17 @@ for attempt in 1 2 3 4 5; do
     )" || fail "The System UI wait action could not be resolved."
     read -r system_wait_x system_wait_y <<< "$system_wait_coordinates"
     adb shell input tap "$system_wait_x" "$system_wait_y"
+    sleep 3
+    adb shell am start -W -n "$package_name/.MainActivity" >/dev/null
+  else
+    # UIAutomator exposes only visible descendants of a ScrollView. The setup
+    # field is below the fold on the ATD's landscape viewport, so bring later
+    # content into view without relaunching and resetting the scroll position.
+    adb shell input swipe \
+      "$scroll_x" "$scroll_start_y" "$scroll_x" "$scroll_end_y" 500 \
+      >/dev/null
   fi
 
-  sleep 3
-  adb shell am start -W -n "$package_name/.MainActivity" >/dev/null
   sleep 2
 done
 [[ -n "$field_coordinates" ]] || \
@@ -179,15 +199,6 @@ display_density="$(
 )"
 [[ "$display_density" =~ ^[1-9][0-9]*$ ]] || \
   fail "Could not determine the emulator display density."
-display_dimensions="$(
-  adb shell dumpsys window displays | tr -d '\r' \
-    | sed -n 's/.* cur=\([0-9][0-9]*\)x\([0-9][0-9]*\) .*/\1 \2/p' \
-    | head -n 1
-)"
-[[ "$display_dimensions" =~ ^([1-9][0-9]*)\ ([1-9][0-9]*)$ ]] || \
-  fail "Could not determine the current display orientation."
-display_width="${BASH_REMATCH[1]}"
-display_height="${BASH_REMATCH[2]}"
 ime_width=$((ime_right - ime_left))
 ime_height=$((ime_bottom - ime_top))
 ((ime_width > 0 && ime_height > 0)) || \

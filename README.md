@@ -180,9 +180,11 @@ Pushes to `main` are evaluated with Semantic Release. `fix:` and `perf:` commits
 produce patch releases, `feat:` commits produce minor releases, and breaking
 changes produce major releases. A release includes a brand-new production APK,
 checksums, the license, third-party notices, generated notes, and a locked Git
-tag. Before tagging, the bot writes the new `versionName` and Android
-`versionCode` into `app/build.gradle.kts` and commits that source metadata. The
-tag, APK, and updated `main` branch all resolve to that generated release commit.
+tag. Before changing a remote ref, the bot writes the new `versionName` and
+Android `versionCode` into `app/build.gradle.kts`, creates a local candidate
+commit, and builds and smoke-tests the signed APK from it. Only a passing
+candidate is pushed and tagged, so the tag, APK, and updated `main` branch all
+resolve to that generated release commit.
 See [`docs/RELEASING.md`](docs/RELEASING.md) for the complete contract.
 
 ## License

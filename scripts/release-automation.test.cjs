@@ -85,7 +85,7 @@ function writeExecutable(filePath, contents) {
 
 function createPackageFixture({
   tagTarget = "head",
-  tagExists = true,
+  tagExists = false,
   outputSymlink = null,
   sourceVersion = "0.1.1",
 } = {}) {
@@ -288,8 +288,7 @@ test("release configuration packages before publishing exact assets", () => {
     [
       "@semantic-release/commit-analyzer",
       "@semantic-release/release-notes-generator",
-      "@semantic-release/exec",
-      "@semantic-release/git",
+      "./scripts/prepare-production-release.cjs",
       "@semantic-release/github",
     ],
   );
@@ -300,22 +299,9 @@ test("release configuration packages before publishing exact assets", () => {
     notesOptions.presetConfig.ignoreCommits,
     "^[a-z]+\\(web\\)!?:",
   );
-  assert.equal(
-    pluginEntries.get("@semantic-release/exec").prepareCmd,
-    "node ./scripts/prepare-release-version.cjs prepare "
-      + "${nextRelease.version} ${lastRelease.version}",
-  );
-  assert.equal(
-    pluginEntries.get("@semantic-release/exec").publishCmd,
-    "./scripts/package-semantic-release.sh "
-      + "${nextRelease.version} ${nextRelease.gitHead} --allow-existing-tag",
-  );
-
-  const gitOptions = pluginEntries.get("@semantic-release/git");
-  assert.deepEqual(gitOptions.assets, ["app/build.gradle.kts"]);
-  assert.equal(
-    gitOptions.message,
-    "chore(release): ${nextRelease.version} [skip ci]",
+  assert.deepEqual(
+    pluginEntries.get("./scripts/prepare-production-release.cjs"),
+    {},
   );
 
   const githubOptions = pluginEntries.get("@semantic-release/github");
@@ -567,87 +553,6 @@ test("source version preparation rejects dirty or malformed state", (t) => {
   );
 });
 
-test("the real Git prepare plugin commits only source version metadata", async (t) => {
-  const fixture = createVersionFixture();
-  t.after(() => rmSync(fixture.fixtureRoot, { recursive: true, force: true }));
-  const productCommit = execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: fixture.fixtureRepository,
-    encoding: "utf8",
-  }).trim();
-  prepareReleaseVersion("0.2.0", "0.1.0", {
-    repositoryRoot: fixture.fixtureRepository,
-  });
-
-  const { prepare } = await import("@semantic-release/git");
-  await prepare(
-    {
-      assets: ["app/build.gradle.kts"],
-      message: "chore(release): ${nextRelease.version} [skip ci]",
-    },
-    {
-      env: process.env,
-      cwd: fixture.fixtureRepository,
-      branch: { name: "main" },
-      options: { repositoryUrl: fixture.fixtureRemote },
-      lastRelease: { version: "0.1.0" },
-      nextRelease: { version: "0.2.0", notes: "Feature notes" },
-      logger: { log() {} },
-    },
-  );
-
-  const releaseCommit = execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: fixture.fixtureRepository,
-    encoding: "utf8",
-  }).trim();
-  assert.notEqual(releaseCommit, productCommit);
-  assert.equal(
-    execFileSync("git", ["rev-parse", "HEAD^"], {
-      cwd: fixture.fixtureRepository,
-      encoding: "utf8",
-    }).trim(),
-    productCommit,
-  );
-  assert.equal(
-    execFileSync("git", ["show", "-s", "--format=%s", "HEAD"], {
-      cwd: fixture.fixtureRepository,
-      encoding: "utf8",
-    }).trim(),
-    "chore(release): 0.2.0 [skip ci]",
-  );
-  assert.equal(
-    execFileSync("git", ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"], {
-      cwd: fixture.fixtureRepository,
-      encoding: "utf8",
-    }).trim(),
-    "app/build.gradle.kts",
-  );
-  assert.equal(
-    execFileSync("git", ["--git-dir", fixture.fixtureRemote, "rev-parse", "main"], {
-      encoding: "utf8",
-    }).trim(),
-    releaseCommit,
-  );
-  assert.deepEqual(
-    sourceMetadata(execFileSync(
-      "git",
-      ["show", `${releaseCommit}:app/build.gradle.kts`],
-      { cwd: fixture.fixtureRepository, encoding: "utf8" },
-    )),
-    { version: "0.2.0", versionCode: 2000n },
-  );
-  assert.deepEqual(
-    prepareReleaseVersion("0.2.0", "0.1.0", {
-      repositoryRoot: fixture.fixtureRepository,
-    }),
-    {
-      changed: false,
-      previousVersion: "0.1.0",
-      version: "0.2.0",
-      versionCode: 2000n,
-    },
-  );
-});
-
 test("invalid or unrepresentable semantic versions are rejected", () => {
   for (const version of [
     "0.0.0",
@@ -671,9 +576,10 @@ test("invalid or unrepresentable semantic versions are rejected", () => {
 
 test("package reconciliation accepts only the exact existing release tag", (t) => {
   for (const [fixtureOptions, arguments_, expectedStatus, expectedError] of [
-    [{}, [], 1, /Release tag already exists/],
-    [{}, ["--allow-existing-tag"], 0, null],
-    [{ tagTarget: "other" }, ["--allow-existing-tag"], 1,
+    [{}, [], 0, null],
+    [{ tagExists: true }, [], 1, /Release tag already exists/],
+    [{ tagExists: true }, ["--allow-existing-tag"], 0, null],
+    [{ tagExists: true, tagTarget: "other" }, ["--allow-existing-tag"], 1,
       /does not resolve to EXPECTED_SOURCE_COMMIT/],
     [{ tagExists: false }, ["--allow-existing-tag"], 1,
       /requires an existing local release tag/],
@@ -693,7 +599,7 @@ test("packaging refuses ignored output symlinks before invoking the build", (t) 
   for (const outputSymlink of ["dist", "release"]) {
     const fixture = createPackageFixture({ outputSymlink });
     t.after(() => rmSync(fixture.fixtureRoot, { recursive: true, force: true }));
-    const result = runPackageFixture(fixture, ["--allow-existing-tag"]);
+    const result = runPackageFixture(fixture);
     assert.equal(result.status, 1, result.stderr);
     assert.match(result.stderr, /must not be symbolic links/);
     assert.equal(
@@ -706,7 +612,7 @@ test("packaging refuses ignored output symlinks before invoking the build", (t) 
 test("packaging refuses a release version that differs from committed source", (t) => {
   const fixture = createPackageFixture({ sourceVersion: "0.2.0" });
   t.after(() => rmSync(fixture.fixtureRoot, { recursive: true, force: true }));
-  const result = runPackageFixture(fixture, ["--allow-existing-tag"]);
+  const result = runPackageFixture(fixture);
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, /Tapziq source is 0\.2\.0 \(2000\), expected 0\.1\.1 \(1001\)/);
 });
@@ -800,6 +706,9 @@ test("production smoke test installs and types through the selected IME", () => 
   assert.match(emulatorSmokeScript, /System UI isn.*t responding/);
   assert.match(emulatorSmokeScript, /android:id\/aerr_wait/);
   assert.match(emulatorSmokeScript, /dumpsys window windows/);
+  assert.match(emulatorSmokeScript, /for attempt in 1 2 3 4 5 6 7 8; do/);
+  assert.match(emulatorSmokeScript, /adb shell input swipe/);
+  assert.match(emulatorSmokeScript, /below the fold on the ATD's landscape viewport/);
   assert.match(emulatorSmokeScript, /adb shell input tap "\$key_x" "\$key_y"/);
   assert.match(
     emulatorSmokeScript,
@@ -879,11 +788,15 @@ test("workflow keeps secrets out of PR verification and uses safe token scopes",
     workflow,
     /\n  release:[\s\S]*?\n    permissions:\n      attestations: read\n      contents: write/,
   );
-  assert.match(workflow, /environment: production/);
-  assert.equal((workflow.match(/fetch-depth: 0/g) || []).length, 2);
-  assert.equal((workflow.match(/persist-credentials: false/g) || []).length, 2);
-  assert.equal((workflow.match(/- name: Set up JDK 21/g) || []).length, 2);
-  assert.equal((workflow.match(/java-version: "21"/g) || []).length, 2);
+  assert.match(
+    workflow,
+    /\n  audit:[\s\S]*?\n    permissions:\n      attestations: read\n      contents: read/,
+  );
+  assert.equal((workflow.match(/environment: production/g) || []).length, 1);
+  assert.equal((workflow.match(/fetch-depth: 0/g) || []).length, 3);
+  assert.equal((workflow.match(/persist-credentials: false/g) || []).length, 3);
+  assert.equal((workflow.match(/- name: Set up JDK 21/g) || []).length, 3);
+  assert.equal((workflow.match(/java-version: "21"/g) || []).length, 3);
   assert.doesNotMatch(workflow, /Set up JDK 17|java-version: "17"/);
   assert.match(
     workflow,
@@ -896,7 +809,7 @@ test("workflow keeps secrets out of PR verification and uses safe token scopes",
   assert.doesNotMatch(preflightStep[0], /GH_TOKEN:/);
 
   const publishStep = workflow.match(
-    /      - name: Reconcile, build, smoke-test, and publish\n[\s\S]*?(?=\n      - name: Verify any release for this commit)/,
+    /      - name: Reconcile, build, smoke-test, and publish\n[\s\S]*?(?=\n      - name: Record release source)/,
   );
   assert(publishStep);
   assert.match(
@@ -918,6 +831,24 @@ test("workflow keeps secrets out of PR verification and uses safe token scopes",
   assert.match(productionPublisherScript, /npm run release/);
   assert.match(workflow, /\n  release:[\s\S]*?\n    runs-on: macos-15-intel/);
   assert.match(workflow, /\n  release:[\s\S]*?\n    timeout-minutes: 90/);
+  assert.match(
+    workflow,
+    /outputs:\n      release_commit: \$\{\{ steps\.release_state\.outputs\.commit \}\}/,
+  );
+  assert.match(
+    workflow,
+    /id: release_state\n        run: echo "commit=\$\(git rev-parse HEAD\)" >> "\$GITHUB_OUTPUT"/,
+  );
+  const auditJob = workflow.match(/\n  audit:\n[\s\S]*$/);
+  assert(auditJob);
+  assert.doesNotMatch(auditJob[0], /environment:/);
+  assert.match(auditJob[0], /needs: release/);
+  assert.match(
+    auditJob[0],
+    /ref: \$\{\{ needs\.release\.outputs\.release_commit \}\}/,
+  );
+  assert.match(auditJob[0], /run: scripts\/verify-current-release\.sh/);
+  assert.doesNotMatch(workflow, /if: always\(\)/);
   assert.doesNotMatch(workflow, /99-kvm4all|disable-linux-hw-accel/);
   assert.match(publishStep[0], /target: aosp_atd/);
   assert.match(publishStep[0], /arch: x86_64/);
@@ -930,7 +861,7 @@ test("workflow keeps secrets out of PR verification and uses safe token scopes",
 
   const actionReferences = [...workflow.matchAll(/uses: ([^\s]+)/g)]
     .map((match) => match[1]);
-  assert.equal(actionReferences.length, 11);
+  assert.equal(actionReferences.length, 15);
   for (const actionReference of actionReferences) {
     assert.match(
       actionReference,
