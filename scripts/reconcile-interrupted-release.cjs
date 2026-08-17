@@ -252,6 +252,10 @@ function freezeWorkflowSmokeScript(workflowCommit) {
 
 function approvedRecoveryVerifier(workflowCommit, releaseCommit) {
   const historicalVerifier = gitFile(releaseCommit, PUBLISHED_VERIFIER_PATH);
+  const workflowVerifier = gitFile(workflowCommit, PUBLISHED_VERIFIER_PATH);
+  if (historicalVerifier === workflowVerifier) {
+    return historicalVerifier;
+  }
   const vulnerableIndex = historicalVerifier.indexOf(VULNERABLE_REMOTE_TAG_AWK);
   if (
     vulnerableIndex === -1
@@ -270,7 +274,7 @@ function approvedRecoveryVerifier(workflowCommit, releaseCommit) {
     VULNERABLE_REMOTE_TAG_AWK,
     PORTABLE_REMOTE_TAG_AWK,
   );
-  if (gitFile(workflowCommit, PUBLISHED_VERIFIER_PATH) !== approvedVerifier) {
+  if (workflowVerifier !== approvedVerifier) {
     fail(
       "The workflow published verifier differs from the historical verifier "
         + "beyond the audited portability repair.",

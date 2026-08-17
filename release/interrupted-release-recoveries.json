@@ -4,6 +4,11 @@
       "tag": "v0.1.1",
       "commit": "93dba3b8a71e5543ad4c1511f89c723309c03919",
       "proofreadRowsBeforeLetters": 0
+    },
+    {
+      "tag": "v0.5.0",
+      "commit": "57077c8c910b428a58a1a2dcadd8d128d6aee55d",
+      "proofreadRowsBeforeLetters": 1
     }
   ]
 }

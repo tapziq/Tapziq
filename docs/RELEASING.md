@@ -35,12 +35,16 @@ and the result cannot exceed Android's `2,100,000,000` limit.
 
 For every automated release, the bot updates the checked-in
 `tapziqSourceVersionName` and `tapziqSourceVersionCode` declarations in
-`app/build.gradle.kts`. It commits only that file as
-`chore(release): X.Y.Z [skip ci]`, pushes the commit to `main`, and tags that
-commit. Packaging then rejects any mismatch among those source declarations,
-the requested release version, the APK metadata, and the APK's embedded Git
-revision. The skip marker prevents the generated commit from starting a second
-release workflow.
+`app/build.gradle.kts`. It first creates a local candidate commit containing
+only that file as `chore(release): X.Y.Z [skip ci]`. The signed APK is built,
+verified, installed, and exercised from that candidate before any remote ref is
+changed. Only after every pre-publication gate passes does the bot confirm that
+remote `main` still names the candidate's parent, fast-forward the candidate to
+`main`, tag it, and publish the release. A build or emulator failure therefore
+cannot consume a version or leave an orphan tag. Packaging rejects any mismatch
+among the source declarations, requested release version, APK metadata, and the
+APK's embedded Git revision. The skip marker prevents the generated commit from
+starting a second release workflow.
 
 ## Release assets
 
@@ -56,12 +60,16 @@ checks the application ID, version name/code, minimum and target SDKs,
 non-debuggable state, the exact audited permission allowlist, the exact
 `arm64-v8a`/`x86_64` LiteRT-LM native-library set, the in-APK copy of the
 audited third-party notices, zip alignment,
-one production signer, v2/v3 signatures, permanent certificate fingerprint, and embedded Git
-source commit. Before publication, the workflow installs that exact signed APK
+one production signer, v2/v3 signatures, permanent certificate fingerprint,
+and embedded Git source commit. Before changing `main` or creating the tag, the
+workflow installs that exact signed APK
 on an Android 16 automated test device, discovers/enables/selects its
 input-method service, opens its test field, and presses a real Tapziq key through
-the IME. The workflow then downloads the public assets and compares them with
-the files it packaged.
+the IME. The protected Publish job ends when GitHub accepts the complete release.
+A separate read-only Audit job then downloads the public assets and checks the
+public release contract. This keeps a transient audit connection failure visible
+without incorrectly changing an already published production deployment to
+failed.
 
 The automated smoke test does not download the 2.59 GB Gemma 4 model, so it
 covers the core IME but not inference. Proofreading releases additionally
@@ -71,9 +79,10 @@ Dismiss, exact Apply, and stale-editor rejection. Record the device model,
 Android version, APK SHA-256, model SHA-256 result, and pass/fail result in the
 release run before publication; build-only evidence is not sufficient.
 
-If Semantic Release is interrupted after pushing its generated source-version
-commit, a rerun may advance its checkout from the triggering product commit only
-to that one direct, narrowly scoped release commit. If interruption happens
+If Semantic Release is interrupted after all pre-publication gates pass and its
+generated source-version commit reaches `main`, a rerun may advance its checkout
+from the triggering product commit only to that one direct, narrowly scoped
+release commit. If interruption happens
 after the tag and stable-channel Git note but before the GitHub Release, the run
 independently recomputes the SemVer level and notes, rebuilds and smoke-tests the
 APK, validates or creates one matching draft, replaces only stale expected
@@ -109,11 +118,13 @@ The keystore is decoded only into the runner's temporary directory with mode
 tracked in `release/signing-certificate.sha256`; replacing it would prevent
 upgrades from earlier Tapziq releases.
 
-The Publish job receives only `contents: write` and `attestations: read`.
-Semantic Release receives the built-in token as `GITHUB_TOKEN`, while
-post-publication `gh` checks receive `GH_TOKEN` in a separate step. Pull requests
-never receive the production secrets. Repository rules must continue to permit
-that token to push the narrowly scoped generated release commit to `main`.
+The protected Publish job receives only `contents: write` and
+`attestations: read`. Semantic Release receives the built-in token as
+`GITHUB_TOKEN`. The separate Audit job has read-only contents and attestation
+access and receives the token as `GH_TOKEN`; it is not attached to the
+`production` environment. Pull requests never receive the production secrets.
+Repository rules must continue to permit the Publish job's token to push the
+narrowly scoped generated release commit to `main`.
 
 Before activating the workflow, a repository administrator must:
 

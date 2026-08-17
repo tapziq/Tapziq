@@ -687,6 +687,36 @@ test("a tracked exact ancestor release is recovered before the workflow continue
   }
 });
 
+test("configured recovery accepts an unchanged historical verifier", () => {
+  const fixture = createFixture({
+    fullReconcile: true,
+    generatedReleaseCommit: true,
+    releaseCommit: true,
+    withTag: true,
+  });
+  try {
+    configureTrackedAncestor(fixture);
+
+    const result = runHelper(fixture, {
+      TAPZIQ_TEST_EXPECT_PACKAGE_SMOKE: "0",
+      TAPZIQ_TEST_RECONCILE: "1",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.output, "handled=false\n");
+    assertWorkflowCheckoutRestored(fixture);
+    assert.equal(
+      readFileSync(path.join(fixture.root, "verify-record"), "utf8"),
+      `0.2.0 ${fixture.releaseHead}\n`,
+    );
+    assert.equal(
+      JSON.parse(readFileSync(path.join(fixture.root, "gh-state.json"), "utf8")).published,
+      true,
+    );
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("configured recovery rejects verifier changes beyond the audited repair", () => {
   const fixture = createFixture({
     fullReconcile: true,
