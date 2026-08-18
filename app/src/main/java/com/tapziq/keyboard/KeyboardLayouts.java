@@ -22,6 +22,7 @@ final class KeyboardLayouts {
         NUMBERS,
         SYMBOLS,
         PROOFREAD,
+        TRANSLATE,
         NEXT_IME,
         SPACER
     }
@@ -52,7 +53,7 @@ final class KeyboardLayouts {
             boolean shifted,
             boolean offerImeSwitch,
             String enterLabel,
-            boolean offerProofread
+            boolean offerTextTools
     ) {
         switch (mode) {
             case NUMBERS:
@@ -61,7 +62,7 @@ final class KeyboardLayouts {
                 return symbolRows(offerImeSwitch, enterLabel);
             case LETTERS:
             default:
-                return letterRows(shifted, offerImeSwitch, enterLabel, offerProofread);
+                return letterRows(shifted, offerImeSwitch, enterLabel, offerTextTools);
         }
     }
 
@@ -69,11 +70,11 @@ final class KeyboardLayouts {
             boolean shifted,
             boolean offerImeSwitch,
             String enterLabel,
-            boolean offerProofread
+            boolean offerTextTools
     ) {
         List<List<KeySpec>> rows = new ArrayList<>();
-        if (offerProofread) {
-            rows.add(proofreadRow());
+        if (offerTextTools) {
+            rows.add(textToolsRow());
         }
         rows.add(textRow("qwertyuiop", shifted));
 
@@ -141,9 +142,10 @@ final class KeyboardLayouts {
         return row;
     }
 
-    private static List<KeySpec> proofreadRow() {
+    private static List<KeySpec> textToolsRow() {
         List<KeySpec> row = new ArrayList<>();
-        row.add(action("Proofread with Gemma 4", Action.PROOFREAD, 1f));
+        row.add(action("Proofread", Action.PROOFREAD, 1f));
+        row.add(action("Translate", Action.TRANSLATE, 1f));
         return row;
     }
 

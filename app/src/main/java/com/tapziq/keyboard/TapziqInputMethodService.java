@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 
 public final class TapziqInputMethodService extends InputMethodService {
     private static final long RESULT_PROOFREAD_TIMEOUT_MS = TimeUnit.MINUTES.toMillis(2);
+    private static final long RESULT_TRANSLATION_TIMEOUT_MS = TimeUnit.MINUTES.toMillis(2);
     private static final long AUTOCORRECT_DELAY_MS = 600L;
     private static final long AUTOCORRECT_LEARNING_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(30);
     private static final long RECENT_AUTOCORRECTION_TIMEOUT_NANOS = TimeUnit.MINUTES.toNanos(2);
@@ -36,8 +37,13 @@ public final class TapziqInputMethodService extends InputMethodService {
     private String proofreadSuggestion;
     private int proofreadSessionId;
     private EditorIdentity proofreadEditor;
+    private ProofreadTarget translationTarget;
+    private String translationSuggestion;
+    private int translationSessionId;
+    private EditorIdentity translationEditor;
     private volatile Handler proofreadTimeoutHandler;
     private final Runnable proofreadTimeout = this::clearProofreadState;
+    private final Runnable translationTimeout = this::clearTranslationState;
     private final Runnable pendingAutocorrect = this::startPendingAutocorrect;
     private final Runnable autocorrectLearningTimeout = this::clearAutocorrectLearningSession;
     private final Runnable recentAutocorrectionExpiry = this::expireRecentAutocorrections;
@@ -119,6 +125,7 @@ public final class TapziqInputMethodService extends InputMethodService {
         autocorrectLearningStore.registerClearListener(learningMemoryListener);
         AutocorrectSettings.registerListener(this, autocorrectSettingsListener);
         ProofreadSession.setListener(this::onProofreadSessionChanged);
+        TranslationSession.setListener(this::onTranslationSessionChanged);
     }
 
     @Override
@@ -137,6 +144,16 @@ public final class TapziqInputMethodService extends InputMethodService {
             @Override
             public void onDismissProofread() {
                 dismissProofreadSuggestionForLearning();
+            }
+
+            @Override
+            public void onApplyTranslation() {
+                applyTranslationSuggestion();
+            }
+
+            @Override
+            public void onDismissTranslation() {
+                clearTranslationState();
             }
 
             @Override
@@ -180,8 +197,18 @@ public final class TapziqInputMethodService extends InputMethodService {
                 || (showingSuggestion && !currentProofreadContextMatches())) {
             clearProofreadState();
         }
+        boolean activeTranslation = translationSessionId != 0
+                && TranslationSession.isActive(translationSessionId);
+        boolean showingTranslation = translationSuggestion != null;
+        // The companion and bridge Activities can temporarily become the IME's editor. Preserve
+        // an in-flight handoff, but keep an already surfaced result bound to its exact source.
+        if ((!activeTranslation && !showingTranslation)
+                || (showingTranslation && !currentTranslationContextMatches())) {
+            clearTranslationState();
+        }
         renderKeyboard();
         consumeProofreadResult();
+        consumeTranslationResult();
     }
 
     @Override
@@ -197,6 +224,9 @@ public final class TapziqInputMethodService extends InputMethodService {
         shifted = false;
         if (proofreadSessionId == 0) {
             clearProofreadState();
+        }
+        if (translationSessionId == 0) {
+            clearTranslationState();
         }
     }
 
@@ -229,6 +259,7 @@ public final class TapziqInputMethodService extends InputMethodService {
     public void onWindowShown() {
         super.onWindowShown();
         consumeProofreadResult();
+        consumeTranslationResult();
     }
 
     private void handleKey(KeyboardLayouts.KeySpec key) {
@@ -241,6 +272,10 @@ public final class TapziqInputMethodService extends InputMethodService {
         if (proofreadSuggestion != null && changesEditorText(key.action)) {
             // Typing over a reviewed result is the same Tapziq-owned rejection signal as ×.
             dismissProofreadSuggestionForLearning();
+        }
+        if ((translationSessionId != 0 || translationSuggestion != null)
+                && changesEditorText(key.action)) {
+            clearTranslationState();
         }
         if (key.action == KeyboardLayouts.Action.DELETE && undoLastAutocorrect()) {
             return;
@@ -302,6 +337,9 @@ public final class TapziqInputMethodService extends InputMethodService {
                 break;
             case PROOFREAD:
                 startProofread();
+                break;
+            case TRANSLATE:
+                startTranslation();
                 break;
             case SPACER:
                 break;
@@ -388,6 +426,13 @@ public final class TapziqInputMethodService extends InputMethodService {
                 || action == KeyboardLayouts.Action.ENTER;
     }
 
+    private boolean manualOperationBusy() {
+        return proofreadSessionId != 0
+                || proofreadSuggestion != null
+                || translationSessionId != 0
+                || translationSuggestion != null;
+    }
+
     private static boolean isLearningBoundary(KeyboardLayouts.KeySpec key) {
         return key.action == KeyboardLayouts.Action.SPACE
                 || key.action == KeyboardLayouts.Action.ENTER
@@ -401,8 +446,7 @@ public final class TapziqInputMethodService extends InputMethodService {
                 || !isInputViewShown()
                 || !AutocorrectSettings.isEnabled(this)
                 || !EditorBehavior.supportsProofreading(editorInfo)
-                || proofreadSessionId != 0
-                || proofreadSuggestion != null) {
+                || manualOperationBusy()) {
             return;
         }
         pendingAutocorrectBoundary = committedBoundary;
@@ -417,8 +461,7 @@ public final class TapziqInputMethodService extends InputMethodService {
                 || !isInputViewShown()
                 || !AutocorrectSettings.isEnabled(this)
                 || !EditorBehavior.supportsProofreading(editorInfo)
-                || proofreadSessionId != 0
-                || proofreadSuggestion != null) {
+                || manualOperationBusy()) {
             return;
         }
 
@@ -522,8 +565,7 @@ public final class TapziqInputMethodService extends InputMethodService {
                                 || learningClearGeneration
                                         != autocorrectLearningStore.clearGeneration()))
                 || !EditorBehavior.supportsProofreading(editorInfo)
-                || proofreadSessionId != 0
-                || proofreadSuggestion != null) {
+                || manualOperationBusy()) {
             finishAutocorrectRequest(operationId);
             return;
         }
@@ -624,7 +666,7 @@ public final class TapziqInputMethodService extends InputMethodService {
         }
         showingAutocorrectNotice = false;
         if (keyboardPanel != null) {
-            keyboardPanel.hideProofreadMessage();
+            keyboardPanel.hideProofreadingContent();
         }
     }
 
@@ -1203,6 +1245,10 @@ public final class TapziqInputMethodService extends InputMethodService {
     }
 
     private void handleUserEditorTapForLearning() {
+        if (translationSessionId != 0 || translationSuggestion != null) {
+            clearTranslationState();
+            return;
+        }
         if (proofreadSuggestion != null) {
             // This is a Tapziq-owned reviewed result. An editor tap instead of Apply rejects it.
             dismissProofreadSuggestionForLearning();
@@ -1350,9 +1396,10 @@ public final class TapziqInputMethodService extends InputMethodService {
     }
 
     private void startProofread() {
-        if (proofreadSessionId != 0) {
+        if (proofreadSessionId != 0 || translationSessionId != 0) {
             return;
         }
+        clearTranslationState();
         clearAutocorrectLearningSession();
         clearRecentAutocorrections();
         cancelAutocorrectRequest();
@@ -1424,6 +1471,89 @@ public final class TapziqInputMethodService extends InputMethodService {
             proofreadEditor = null;
             proofreadSessionId = 0;
             showProofreadMessage(getString(R.string.proofread_failed));
+        }
+    }
+
+    private void startTranslation() {
+        if (translationSessionId != 0 || proofreadSessionId != 0) {
+            return;
+        }
+        if (proofreadSuggestion != null) {
+            dismissProofreadSuggestionForLearning();
+        } else {
+            clearProofreadState();
+        }
+        clearAutocorrectLearningSession();
+        clearRecentAutocorrections();
+        cancelAutocorrectRequest();
+        clearAutocorrectUndo();
+        hideAutocorrectNotice();
+        if (!EditorBehavior.supportsProofreading(editorInfo)) {
+            showTranslationMessage(getString(R.string.translation_secure_field));
+            return;
+        }
+
+        InputConnection connection = getCurrentInputConnection();
+        if (connection == null) {
+            showTranslationMessage(getString(R.string.translation_select_text));
+            return;
+        }
+
+        TranslationTarget.Capture capture = captureTranslationTarget(connection);
+        if (!capture.succeeded()) {
+            showTranslationMessage(messageFor(capture.failure));
+            return;
+        }
+
+        translationTarget = capture.target;
+        translationEditor = EditorIdentity.capture(
+                getCurrentInputBinding(),
+                editorInfo,
+                connection
+        );
+        if (translationEditor == null) {
+            translationTarget = null;
+            showTranslationMessage(getString(R.string.translation_failed));
+            return;
+        }
+        translationSuggestion = null;
+        translationSessionId = TranslationSession.begin(translationTarget.text);
+        keyboardPanel.showTranslationMessage(getString(R.string.translation_opening), false);
+
+        int sessionId = translationSessionId;
+        GemmaProofreader proofreader = autocorrectProofreader;
+        autocorrectProofreader = null;
+        if (proofreader != null) {
+            proofreader.close(() -> launchTranslationActivity(sessionId));
+        } else {
+            launchTranslationActivity(sessionId);
+        }
+    }
+
+    private void launchTranslationActivity(int sessionId) {
+        if (sessionId == 0
+                || sessionId != translationSessionId
+                || !TranslationSession.isActive(sessionId)
+                || !currentTranslationContextMatches()) {
+            if (sessionId == translationSessionId) {
+                TranslationSession.cancel(sessionId);
+                showTranslationMessage(getString(R.string.translation_text_changed));
+            }
+            return;
+        }
+        Intent intent = new Intent(this, TranslateBridgeActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_NO_ANIMATION
+                        | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
+                .putExtra(TranslateBridgeActivity.EXTRA_SESSION_ID, translationSessionId);
+        try {
+            startActivity(intent);
+        } catch (RuntimeException error) {
+            TranslationSession.clear();
+            translationTarget = null;
+            translationEditor = null;
+            translationSessionId = 0;
+            showTranslationMessage(getString(R.string.translation_failed));
         }
     }
 
@@ -1591,6 +1721,143 @@ public final class TapziqInputMethodService extends InputMethodService {
         clearProofreadState();
     }
 
+    private void consumeTranslationResult() {
+        int sessionId = translationSessionId;
+        TranslationSession.Result result = TranslationSession.peekDeliverableResult(sessionId);
+        if (result == null || result.id != sessionId || keyboardPanel == null
+                || editorInfo == null) {
+            return;
+        }
+        if (translationTarget == null || translationEditor == null) {
+            TranslationSession.takeDeliverableResult(sessionId);
+            clearTranslationState();
+            return;
+        }
+        InputConnection connection = getCurrentInputConnection();
+        if (connection == null) {
+            return;
+        }
+        boolean sameClient = translationEditor.hasSameClient(
+                getCurrentInputBinding(),
+                editorInfo
+        );
+        TranslationReturnPolicy.Decision preliminaryDecision =
+                TranslationReturnPolicy.decide(
+                        editorInfo.inputType,
+                        sameClient,
+                        true,
+                        true,
+                        true
+                );
+        if (preliminaryDecision == TranslationReturnPolicy.Decision.WAIT) {
+            // Offline Translator, the bridge, and TYPE_NULL transition windows can briefly own
+            // the IME. Do not inspect or discard their text; wait for the bounded source return.
+            return;
+        }
+        TranslationReturnPolicy.Decision restoredDecision =
+                TranslationReturnPolicy.decide(
+                        editorInfo.inputType,
+                        true,
+                        EditorBehavior.supportsProofreading(editorInfo),
+                        translationEditor.matchesReconnectedEditor(
+                                getCurrentInputBinding(),
+                                editorInfo
+                        ),
+                        targetStillMatches(connection, translationTarget)
+                );
+        if (restoredDecision != TranslationReturnPolicy.Decision.ACCEPT) {
+            TranslationSession.takeDeliverableResult(sessionId);
+            translationSessionId = 0;
+            translationTarget = null;
+            translationEditor = null;
+            translationSuggestion = null;
+            showTranslationMessage(getString(R.string.translation_text_changed));
+            return;
+        }
+        result = TranslationSession.takeDeliverableResult(sessionId);
+        if (result == null) {
+            clearTranslationState();
+            return;
+        }
+        cancelTranslationExpiry();
+        translationSessionId = 0;
+        if (result.suggestion != null) {
+            translationSuggestion = result.suggestion;
+            if (result.suggestion.equals(translationTarget.text)) {
+                translationSuggestion = null;
+                translationTarget = null;
+                translationEditor = null;
+                showTranslationMessage(getString(R.string.translation_no_changes));
+            } else {
+                showingAutocorrectNotice = false;
+                keyboardPanel.showTranslationSuggestion(result.suggestion);
+                scheduleTranslationExpiry(RESULT_TRANSLATION_TIMEOUT_MS);
+            }
+        } else {
+            translationSuggestion = null;
+            translationTarget = null;
+            translationEditor = null;
+            showTranslationMessage(
+                    result.message != null
+                            ? result.message
+                            : getString(R.string.translation_failed)
+            );
+        }
+    }
+
+    private void applyTranslationSuggestion() {
+        if (translationTarget == null || translationSuggestion == null) {
+            clearTranslationState();
+            return;
+        }
+        if (!EditorBehavior.supportsProofreading(editorInfo)) {
+            clearTranslationState();
+            return;
+        }
+
+        InputConnection connection = getCurrentInputConnection();
+        if (connection == null
+                || translationEditor == null
+                || !translationEditor.matchesReconnectedEditor(
+                        getCurrentInputBinding(),
+                        editorInfo
+                )
+                || !targetStillMatches(connection, translationTarget)) {
+            translationTarget = null;
+            translationEditor = null;
+            translationSuggestion = null;
+            showTranslationMessage(getString(R.string.translation_text_changed));
+            return;
+        }
+
+        boolean replaced;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            replaced = connection.replaceText(
+                    translationTarget.start(),
+                    translationTarget.end(),
+                    translationSuggestion,
+                    1,
+                    null
+            );
+        } else {
+            LegacyProofreadApplier.Result result = LegacyProofreadApplier.apply(
+                    connection,
+                    translationTarget,
+                    translationSuggestion
+            );
+            if (result == LegacyProofreadApplier.Result.STALE) {
+                showTranslationMessage(getString(R.string.translation_text_changed));
+                return;
+            }
+            replaced = result == LegacyProofreadApplier.Result.APPLIED;
+        }
+        if (!replaced) {
+            showTranslationMessage(getString(R.string.translation_failed));
+            return;
+        }
+        clearTranslationState();
+    }
+
     private ProofreadTarget.Capture captureTarget(InputConnection connection) {
         ExtractedText extracted = connection.getExtractedText(extractedTextRequest(), 0);
         if (extracted != null && extracted.text != null) {
@@ -1605,6 +1872,22 @@ public final class TapziqInputMethodService extends InputMethodService {
             );
         }
         return ProofreadTarget.Capture.failure(ProofreadTarget.Failure.INVALID_SELECTION);
+    }
+
+    private TranslationTarget.Capture captureTranslationTarget(InputConnection connection) {
+        ExtractedText extracted = connection.getExtractedText(extractedTextRequest(), 0);
+        if (extracted != null && extracted.text != null) {
+            boolean completeDocument = extracted.startOffset == 0
+                    && extracted.partialStartOffset < 0;
+            return TranslationTarget.fromExtracted(
+                    extracted.text,
+                    extracted.startOffset,
+                    extracted.selectionStart,
+                    extracted.selectionEnd,
+                    completeDocument
+            );
+        }
+        return TranslationTarget.Capture.failure(TranslationTarget.Failure.INVALID_SELECTION);
     }
 
     private boolean targetStillMatches(InputConnection connection, ProofreadTarget target) {
@@ -1632,6 +1915,19 @@ public final class TapziqInputMethodService extends InputMethodService {
         }
     }
 
+    private String messageFor(TranslationTarget.Failure failure) {
+        switch (failure) {
+            case TOO_LONG:
+                return getString(R.string.translation_too_long);
+            case NO_SELECTION:
+            case INVALID_SELECTION:
+                return getString(R.string.translation_select_text);
+            case NO_TEXT:
+            default:
+                return getString(R.string.translation_select_text);
+        }
+    }
+
     private void showProofreadMessage(String message) {
         cancelProofreadExpiry();
         proofreadTarget = null;
@@ -1655,7 +1951,36 @@ public final class TapziqInputMethodService extends InputMethodService {
         proofreadSessionId = 0;
         showingAutocorrectNotice = false;
         if (keyboardPanel != null) {
-            keyboardPanel.hideProofreadMessage();
+            keyboardPanel.hideProofreadingContent();
+        }
+    }
+
+    private void showTranslationMessage(String message) {
+        cancelTranslationExpiry();
+        if (translationSessionId != 0) {
+            TranslationSession.cancel(translationSessionId);
+        }
+        translationTarget = null;
+        translationEditor = null;
+        translationSuggestion = null;
+        translationSessionId = 0;
+        showingAutocorrectNotice = false;
+        if (keyboardPanel != null) {
+            keyboardPanel.showTranslationMessage(message, true);
+        }
+    }
+
+    private void clearTranslationState() {
+        cancelTranslationExpiry();
+        if (translationSessionId != 0) {
+            TranslationSession.cancel(translationSessionId);
+        }
+        translationTarget = null;
+        translationEditor = null;
+        translationSuggestion = null;
+        translationSessionId = 0;
+        if (keyboardPanel != null) {
+            keyboardPanel.hideTranslationContent();
         }
     }
 
@@ -1675,6 +2000,21 @@ public final class TapziqInputMethodService extends InputMethodService {
         return connection != null && targetStillMatches(connection, proofreadTarget);
     }
 
+    private boolean currentTranslationContextMatches() {
+        if (translationTarget == null
+                || translationEditor == null
+                || editorInfo == null
+                || !EditorBehavior.supportsProofreading(editorInfo)
+                || !translationEditor.matchesReconnectedEditor(
+                        getCurrentInputBinding(),
+                        editorInfo
+                )) {
+            return false;
+        }
+        InputConnection connection = getCurrentInputConnection();
+        return connection != null && targetStillMatches(connection, translationTarget);
+    }
+
     private void onProofreadSessionChanged(int id) {
         Handler handler = proofreadTimeoutHandler;
         if (handler == null) {
@@ -1688,6 +2028,23 @@ public final class TapziqInputMethodService extends InputMethodService {
                 consumeProofreadResult();
             } else if (!ProofreadSession.isActive(id)) {
                 clearProofreadState();
+            }
+        });
+    }
+
+    private void onTranslationSessionChanged(int id) {
+        Handler handler = proofreadTimeoutHandler;
+        if (handler == null) {
+            return;
+        }
+        handler.post(() -> {
+            if (id != translationSessionId) {
+                return;
+            }
+            if (TranslationSession.hasResult(id)) {
+                consumeTranslationResult();
+            } else if (!TranslationSession.isActive(id)) {
+                clearTranslationState();
             }
         });
     }
@@ -1706,9 +2063,24 @@ public final class TapziqInputMethodService extends InputMethodService {
         }
     }
 
+    private void scheduleTranslationExpiry(long delayMillis) {
+        if (proofreadTimeoutHandler == null) {
+            return;
+        }
+        proofreadTimeoutHandler.removeCallbacks(translationTimeout);
+        proofreadTimeoutHandler.postDelayed(translationTimeout, delayMillis);
+    }
+
+    private void cancelTranslationExpiry() {
+        if (proofreadTimeoutHandler != null) {
+            proofreadTimeoutHandler.removeCallbacks(translationTimeout);
+        }
+    }
+
     @Override
     public void onDestroy() {
         ProofreadSession.setListener(null);
+        TranslationSession.setListener(null);
         AutocorrectSettings.unregisterListener(this, autocorrectSettingsListener);
         if (autocorrectLearningStore != null) {
             autocorrectLearningStore.unregisterClearListener(learningMemoryListener);
@@ -1723,8 +2095,11 @@ public final class TapziqInputMethodService extends InputMethodService {
         }
         clearAutocorrectUndo();
         clearProofreadState();
+        clearTranslationState();
         ProofreadSession.clear();
+        TranslationSession.clear();
         cancelProofreadExpiry();
+        cancelTranslationExpiry();
         proofreadTimeoutHandler = null;
         super.onDestroy();
     }

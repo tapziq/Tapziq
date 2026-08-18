@@ -31,6 +31,10 @@ final class KeyboardPanel extends LinearLayout {
 
         void onDismissProofread();
 
+        void onApplyTranslation();
+
+        void onDismissTranslation();
+
         void onUseAutocorrectOriginal();
 
         void onDismissAutocorrectSuggestion();
@@ -43,6 +47,7 @@ final class KeyboardPanel extends LinearLayout {
     private Button dismissButton;
     private String visibleProofreadText;
     private boolean visibleSuggestion;
+    private boolean visibleTranslation;
     private boolean visibleAutocorrectSuggestion;
     private boolean visibleDismiss;
 
@@ -62,8 +67,35 @@ final class KeyboardPanel extends LinearLayout {
     void showSuggestion(String suggestion) {
         visibleProofreadText = suggestion;
         visibleSuggestion = true;
+        visibleTranslation = false;
         visibleAutocorrectSuggestion = false;
         visibleDismiss = true;
+        if (suggestionBar == null || suggestionText == null
+                || applyButton == null || dismissButton == null) {
+            return;
+        }
+        restoreProofreadBar();
+    }
+
+    void showTranslationSuggestion(String suggestion) {
+        visibleProofreadText = suggestion;
+        visibleSuggestion = true;
+        visibleTranslation = true;
+        visibleAutocorrectSuggestion = false;
+        visibleDismiss = true;
+        if (suggestionBar == null || suggestionText == null
+                || applyButton == null || dismissButton == null) {
+            return;
+        }
+        restoreProofreadBar();
+    }
+
+    void showTranslationMessage(String message, boolean showDismiss) {
+        visibleProofreadText = message;
+        visibleSuggestion = false;
+        visibleTranslation = true;
+        visibleAutocorrectSuggestion = false;
+        visibleDismiss = showDismiss;
         if (suggestionBar == null || suggestionText == null
                 || applyButton == null || dismissButton == null) {
             return;
@@ -74,6 +106,7 @@ final class KeyboardPanel extends LinearLayout {
     void showProofreadMessage(String message, boolean showDismiss) {
         visibleProofreadText = message;
         visibleSuggestion = false;
+        visibleTranslation = false;
         visibleAutocorrectSuggestion = false;
         visibleDismiss = showDismiss;
         if (suggestionBar == null || suggestionText == null
@@ -86,6 +119,7 @@ final class KeyboardPanel extends LinearLayout {
     void showAutocorrectSuggestion(String original) {
         visibleProofreadText = original;
         visibleSuggestion = false;
+        visibleTranslation = false;
         visibleAutocorrectSuggestion = true;
         visibleDismiss = true;
         if (suggestionBar == null || suggestionText == null
@@ -105,10 +139,23 @@ final class KeyboardPanel extends LinearLayout {
     void hideProofreadMessage() {
         visibleProofreadText = null;
         visibleSuggestion = false;
+        visibleTranslation = false;
         visibleAutocorrectSuggestion = false;
         visibleDismiss = false;
         if (suggestionBar != null) {
             setProofreadBarVisible(false);
+        }
+    }
+
+    void hideProofreadingContent() {
+        if (!visibleTranslation) {
+            hideProofreadMessage();
+        }
+    }
+
+    void hideTranslationContent() {
+        if (visibleTranslation) {
+            hideProofreadMessage();
         }
     }
 
@@ -236,6 +283,8 @@ final class KeyboardPanel extends LinearLayout {
         setHapticClickListener(applyButton, () -> {
             if (visibleAutocorrectSuggestion) {
                 listener.onUseAutocorrectOriginal();
+            } else if (visibleTranslation) {
+                listener.onApplyTranslation();
             } else {
                 listener.onApplyProofread();
             }
@@ -246,6 +295,8 @@ final class KeyboardPanel extends LinearLayout {
         setHapticClickListener(dismissButton, () -> {
             if (visibleAutocorrectSuggestion) {
                 listener.onDismissAutocorrectSuggestion();
+            } else if (visibleTranslation) {
+                listener.onDismissTranslation();
             } else {
                 listener.onDismissProofread();
             }
@@ -281,8 +332,11 @@ final class KeyboardPanel extends LinearLayout {
         suggestionText.setTextColor(getContext().getColor(R.color.key_text));
         suggestionText.setContentDescription(
                 visibleSuggestion
-                        ? "Proofreading suggestion. Line breaks are shown as return arrows and "
-                                + "tabs as tab arrows: " + previewText
+                        ? (visibleTranslation
+                                ? "Translation preview. Line breaks are shown as return arrows "
+                                        + "and tabs as tab arrows: " + previewText
+                                : "Proofreading suggestion. Line breaks are shown as return "
+                                        + "arrows and tabs as tab arrows: " + previewText)
                         : visibleAutocorrectSuggestion
                                 ? "Original word suggestion: " + visibleProofreadText
                         : visibleProofreadText
@@ -291,12 +345,16 @@ final class KeyboardPanel extends LinearLayout {
         applyButton.setText(visibleAutocorrectSuggestion ? "Use" : "Apply");
         applyButton.setContentDescription(visibleAutocorrectSuggestion
                 ? "Use original word " + visibleProofreadText
-                : "Apply proofreading suggestion");
+                : visibleTranslation
+                        ? "Apply translation"
+                        : "Apply proofreading suggestion");
         applyButton.setVisibility(showApply ? VISIBLE : GONE);
         applyButton.setEnabled(showApply);
         dismissButton.setContentDescription(visibleAutocorrectSuggestion
                 ? "Dismiss original word suggestion"
-                : "Dismiss proofreading suggestion");
+                : visibleTranslation
+                        ? "Dismiss translation"
+                        : "Dismiss proofreading suggestion");
         dismissButton.setVisibility(visibleDismiss ? VISIBLE : GONE);
     }
 
@@ -350,6 +408,8 @@ final class KeyboardPanel extends LinearLayout {
                 return "Switch keyboard";
             case PROOFREAD:
                 return "Proofread with local Gemma 4";
+            case TRANSLATE:
+                return "Translate selection with Offline Translator";
             case TEXT:
             default:
                 return key.label;

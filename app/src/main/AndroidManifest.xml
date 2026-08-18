@@ -3,6 +3,10 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <queries>
+        <package android:name="dev.davidv.translator" />
+    </queries>
+
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -31,6 +35,15 @@
             android:finishOnTaskLaunch="true"
             android:noHistory="true"
             android:taskAffinity="com.tapziq.keyboard.proofread"
+            android:theme="@style/Theme.Tapziq.Proofread"
+            android:windowSoftInputMode="stateAlwaysHidden" />
+
+        <activity
+            android:name=".TranslateBridgeActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:finishOnTaskLaunch="true"
+            android:taskAffinity="com.tapziq.keyboard.translation"
             android:theme="@style/Theme.Tapziq.Proofread"
             android:windowSoftInputMode="stateAlwaysHidden" />
 

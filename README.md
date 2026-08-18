@@ -4,7 +4,9 @@
 Tapziq is an Android keyboard with a QWERTY layout, one-shot shift, numbers,
 symbols, context-aware enter actions, Android's keyboard switch key, and
 user-initiated proofreading plus optional autocorrect powered on-device by
-Gemma 4 E2B-it.
+Gemma 4 E2B-it. It can also send an explicitly highlighted passage to David
+Ventura's separately installed Offline Translator app and safely return the
+chosen translation to the original field.
 
 The repository also contains a separate [browser-only edition](web/README.md).
 It stores the web-specific Gemma model in origin-private browser storage and
@@ -20,6 +22,34 @@ app-private model are not saved or sent over the network. An optional, separate
 learning switch can save only bounded word-level correction preferences; those
 stay app-private and can be cleared at any time. Tapziq uses network access only
 when the user explicitly downloads the model. See the full [privacy notice](PRIVACY.md).
+
+## Translate selected text with Offline Translator
+
+Install [Offline Translator](https://github.com/DavidVentura/offline-translator)
+from its [F-Droid listing](https://f-droid.org/packages/dev.davidv.translator/),
+open it, and download the language packs you want. Translation models and
+language choices are owned by that companion app; Tapziq does not bundle its
+GPL code, APK, native engine, or model files.
+
+In a compatible text field, highlight the exact passage to translate and tap
+**Translate** above Tapziq's letter keys. Offline Translator opens its local
+source/target picker and translates with the installed packs. Tap its checkmark
+to return the result. Tapziq then returns to the source editor and displays a
+translation preview above the keyboard; the field does not change until you tap
+**Apply**.
+
+Tapziq accepts selections up to 500 characters in complete fields up to 2,000
+characters long. Tapziq records neither the passage nor the result. The original
+app process, field identity, full field snapshot, and selection must still match
+before Tapziq shows the preview and again before Apply. A changed field fails
+closed. Android may recreate its connection wrapper during the companion round
+trip, so Tapziq accepts a reconnected editor only when the app process, stable
+field identity and type, complete field snapshot, and exact selection all still
+match. On Android 8–15, the reported field identity is normally a view resource
+ID rather than Android 16's stable Autofill ID. If an app swaps in a different,
+identical editor that deliberately reuses every one of those values, Android's
+Process Text return does not expose enough information to distinguish it; check
+the visible field before tapping **Apply**. Android 16 uses the stable Autofill ID.
 
 ## Proofread with Gemma 4
 
@@ -133,9 +163,11 @@ Tapziq requires a 64-bit device running Android 8.0 or newer.
    Tapziq and keep the screen open until the download and checksum verification
    finish. You can explicitly pause and later resume the transfer. Wi-Fi and at
    least 3 GB of free space are recommended.
-6. Optional: turn on **Use local Gemma 4 autocorrect**. It remains off unless
+6. To use translation, install Offline Translator from Tapziq's setup screen,
+   open it, and download the source/target language packs you need.
+7. Optional: turn on **Use local Gemma 4 autocorrect**. It remains off unless
    you explicitly enable it.
-7. Tap the test field and type.
+8. Tap the test field and type.
 
 Android intentionally requires the user to enable and select every downloaded
 keyboard. The app cannot bypass those system screens.
