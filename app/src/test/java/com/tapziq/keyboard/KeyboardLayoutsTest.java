@@ -86,7 +86,7 @@ public final class KeyboardLayoutsTest {
     }
 
     @Test
-    public void proofreadActionAppearsOnlyOnLetterLayout() {
+    public void textToolsAppearOnlyOnSupportedLetterLayout() {
         List<List<KeyboardLayouts.KeySpec>> letters = KeyboardLayouts.rows(
                 KeyboardLayouts.Mode.LETTERS,
                 false,
@@ -110,8 +110,11 @@ public final class KeyboardLayoutsTest {
         );
 
         assertTrue(hasAction(letters, KeyboardLayouts.Action.PROOFREAD));
+        assertTrue(hasAction(letters, KeyboardLayouts.Action.TRANSLATE));
         assertTrue(!hasAction(numbers, KeyboardLayouts.Action.PROOFREAD));
+        assertTrue(!hasAction(numbers, KeyboardLayouts.Action.TRANSLATE));
         assertTrue(!hasAction(privateLetters, KeyboardLayouts.Action.PROOFREAD));
+        assertTrue(!hasAction(privateLetters, KeyboardLayouts.Action.TRANSLATE));
     }
 
     private static Set<String> outputs(List<List<KeyboardLayouts.KeySpec>> rows) {

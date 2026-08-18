@@ -4,7 +4,7 @@
     <string name="ime_name">Tapziq Keyboard</string>
     <string name="subtype_english_us">English (US)</string>
     <string name="setup_title">Tapziq Keyboard</string>
-    <string name="setup_intro">A private keyboard with app-private, on-device Gemma 4 proofreading and optional autocorrect.</string>
+    <string name="setup_intro">A private keyboard with app-private Gemma 4 proofreading, optional autocorrect, and selected-text translation through Offline Translator.</string>
     <string name="status_not_enabled">1 of 2 · Tapziq is not enabled yet</string>
     <string name="status_enabled">1 of 2 complete · Tapziq is enabled</string>
     <string name="status_selected">Ready · Tapziq is your current keyboard</string>
@@ -32,6 +32,13 @@
     <string name="model_in_use">Gemma 4 is still closing. Try removing it again in a moment.</string>
     <string name="try_title">Try it here</string>
     <string name="try_hint">Tap here and type</string>
+    <string name="translation_setup_title">Offline translation</string>
+    <string name="translation_setup_body">Tapziq works with David Ventura’s separately installed Offline Translator app. Install it, open it once, and download the language packs you want. Then highlight text in any compatible field, tap Translate above the keyboard, choose the languages in Offline Translator, and return the result to Tapziq for review before Apply. Offline Translator’s current Process Text diagnostics may write the returned translation to Android’s diagnostic log; Tapziq does not log it.</string>
+    <string name="translation_app_ready">Offline Translator is installed. Open it to download or manage language packs.</string>
+    <string name="translation_app_not_installed">Offline Translator is required for the Translate key and is not installed.</string>
+    <string name="translation_app_open">Open Offline Translator</string>
+    <string name="translation_app_install">Get Offline Translator</string>
+    <string name="translation_app_open_failed">Android could not open Offline Translator or its install page.</string>
     <string name="autocorrect_title">Gemma autocorrect</string>
     <string name="autocorrect_body">Off by default. When enabled, Tapziq sends recently completed text only to the local Gemma model after you pause. A correction is applied only if the field and cursor are still exactly unchanged. Model loading can take time; Backspace immediately after a correction restores the original text.</string>
     <string name="autocorrect_switch">Use local Gemma 4 autocorrect</string>
@@ -53,7 +60,7 @@
     <string name="autocorrect_learning_clear_confirm">This deletes Tapziq’s app-private word correction memory. The Gemma model and autocorrect setting will not change.</string>
     <string name="autocorrect_learning_clear_failed">Tapziq could not durably clear the learned corrections. Try again.</string>
     <string name="privacy_title">Private by design</string>
-    <string name="privacy_body">Typed text stays on your device. When you request proofreading, or when you explicitly enable Gemma autocorrect, Tapziq briefly reads up to 2,000 characters of the active field in memory so it can verify that the field and cursor remain unchanged; only the requested or recently completed passage (up to 500 characters) is processed by the app-private Gemma 4 model. Tapziq does not save passages or general typing history, read the clipboard, show ads, run analytics, or send editor text over the network. If you separately enable correction learning, Tapziq can save up to 100 exact word-level preferences in app-private, no-backup storage; you can clear them here. Network access is used only for the explicit model download.</string>
+    <string name="privacy_body">Typed text stays on your device. For proofreading and enabled autocorrect, Tapziq briefly reads up to 2,000 characters so it can validate the editor; only the requested or recently completed passage (up to 500 characters) is processed by Tapziq’s app-private Gemma model. For translation, only text you explicitly highlight is handed in memory to the separately installed Offline Translator app, whose language packs, processing, storage, and diagnostics are controlled by that app. Its current Process Text diagnostics may write the returned translation to Android’s diagnostic log; Tapziq does not log it. Tapziq receives the chosen result in memory and changes the field only after Apply. Tapziq does not save passages or general typing history, read the clipboard, show ads, run analytics, or put editor text in its own network requests. Optional correction learning can save up to 100 exact word-level preferences in app-private, no-backup storage. Tapziq’s own network access is used only for an explicit Gemma model download.</string>
     <string name="system_warning_note">Android shows a standard warning when any downloaded keyboard is enabled. Tapziq cannot enable or select itself; those choices stay under your control.</string>
     <string name="proofread_activity_title">Proofreading on your device</string>
     <string name="proofread_checking">Preparing the local Gemma 4 model…</string>
@@ -72,4 +79,14 @@
     <string name="proofread_secure_field">Proofreading is disabled in password and secure fields.</string>
     <string name="proofread_no_changes">No proofreading changes suggested.</string>
     <string name="proofread_text_changed">The text changed. Run Proofread again.</string>
+    <string name="translation_activity_title">Translate highlighted text</string>
+    <string name="translation_opening">Opening Offline Translator…</string>
+    <string name="translation_app_missing">Install Offline Translator, open it, and download a language pack first.</string>
+    <string name="translation_invalid_result">Offline Translator did not return usable text.</string>
+    <string name="translation_failed">Translation could not finish. Try again.</string>
+    <string name="translation_secure_field">Translation is disabled in password and secure fields.</string>
+    <string name="translation_select_text">Highlight the exact text you want to translate first.</string>
+    <string name="translation_too_long">Select a shorter passage (up to 500 characters).</string>
+    <string name="translation_text_changed">The text or selection changed. Run Translate again.</string>
+    <string name="translation_no_changes">Offline Translator returned the original text unchanged.</string>
 </resources>

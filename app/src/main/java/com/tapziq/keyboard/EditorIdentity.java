@@ -95,6 +95,38 @@ final class EditorIdentity {
                 && fieldId == info.fieldId;
     }
 
+    /**
+     * Matches an editor after an external Activity round trip.
+     *
+     * <p>Android 8 through 15 can recreate the {@link InputConnection} wrapper while returning
+     * to the same view, so wrapper identity is not a usable requirement for translation. The
+     * caller must additionally revalidate the complete document and exact selection before
+     * trusting this result. Proofreading stays on the stricter {@link #matches} path.</p>
+     */
+    boolean matchesReconnectedEditor(InputBinding binding, EditorInfo info) {
+        if (!hasSameClient(binding, info) || inputType != info.inputType) {
+            return false;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA && autofillId != null) {
+            if (!autofillId.equals(Api36Impl.getAutofillId(info))) {
+                return false;
+            }
+            if (Api36Impl.isVirtual(autofillId)) {
+                return true;
+            }
+        }
+        return fieldId > 0 && fieldId == info.fieldId;
+    }
+
+    /** Whether Android has returned to the same app process that originated the operation. */
+    boolean hasSameClient(InputBinding binding, EditorInfo info) {
+        return binding != null
+                && info != null
+                && uid == binding.getUid()
+                && pid == binding.getPid()
+                && Objects.equals(packageName, info.packageName);
+    }
+
     @SuppressLint("NewApi")
     private static final class Api36Impl {
         private Api36Impl() {

@@ -9,13 +9,28 @@ system keyboard.
 
 Tapziq is an Android keyboard with optional, user-initiated proofreading and a
 separate, explicitly enabled autocorrect feature powered by an app-private
-Gemma 4 E2B-it model through the LiteRT-LM runtime.
+Gemma 4 E2B-it model through the LiteRT-LM runtime. Selected-text translation
+uses David Ventura's separately installed Offline Translator Android app.
 
 ## Text handling
 
 - Ordinary key presses go directly to the active Android text field. Tapziq does
   not store general typing history or read the clipboard. Gemma autocorrect and
   correction learning are separate features and are both off by default.
+- When you highlight text and tap **Translate**, Tapziq sends only that selected
+  passage to the separately installed `dev.davidv.translator` app through
+  Android's Process Text interface. Offline Translator owns its language picker,
+  downloaded packs, local inference, storage, and diagnostics. Its current
+  Process Text implementation can include the returned translation in Android's
+  diagnostic log. Tapziq receives the chosen translation in memory and does not
+  log it; Tapziq revalidates the exact source app process, field identity/type,
+  document, and selection, and shows a preview. It changes the field only after
+  you tap **Apply** and a second revalidation succeeds. Canceling, changing the
+  editor, losing the secure editor connection, or killing Tapziq fails closed.
+  Android 8–15 normally reports a view resource ID for the field; a different,
+  identical field in the same app process that reuses that ID and every checked
+  value cannot be distinguished through Process Text. Android 16 adds a stable
+  Autofill ID. The explicit preview lets you verify the visible field before Apply.
 - When you tap **Proofread with Gemma 4**, Tapziq reads the active field and
   briefly hashes up to 2,000 characters in memory so it can verify that the
   field and selection have not changed before showing or applying a result.
@@ -31,9 +46,11 @@ Gemma 4 E2B-it model through the LiteRT-LM runtime.
   editor identity, complete field, selection, and caret remain exactly
   unchanged. A new Tapziq key cancels pending work. Backspace immediately after
   an applied correction can restore the original text.
-- The text and resulting suggestion are processed locally in Tapziq's process.
-  Tapziq does not put editor text into a network request, URL, log, model
-  download, analytics event, or crash report.
+- Proofreading/autocorrect text and resulting suggestions are processed locally
+  in Tapziq's process. Tapziq does not put editor text into its own network
+  request, URL, log, model download, analytics event, or crash report. Translation
+  text crosses the on-device process boundary described above and is governed by
+  the separately installed Offline Translator app while it handles the request.
 - Unless correction learning is separately enabled, Tapziq keeps the text and
   suggestion only in memory long enough to show the manual result or safely
   complete an enabled automatic check. Tapziq does not save either one.
@@ -75,6 +92,11 @@ pinned in Tapziq's source. Download requests contain ordinary HTTP metadata such
 as Tapziq's user agent and the device's IP address; they never contain keyboard
 or proofreading text.
 
+Offline Translator is installed and operated separately. Its language-pack
+downloads and other network behavior are not Tapziq network requests and are
+governed by that app. Tapziq does not bundle or copy its APK, native libraries,
+translation models, or stored settings.
+
 The verified model is stored in Tapziq's app-private, no-backup directory.
 Tapziq does not enable LiteRT-LM's persistent optimized-weight cache. Other
 ordinary apps and browsers cannot access the model directory. Android removes
@@ -95,6 +117,10 @@ Gemma 4 proofreading and autocorrect require a compatible 64-bit Android device,
 about 2.59 GB for the model plus download headroom, and enough memory to load the
 model. This release configures English correction. A missing, corrupt, or
 unsupported model fails closed and leaves ordinary keyboard input available.
+
+Translation requires a compatible, separately installed Offline Translator app
+and the relevant downloaded language packs. Tapziq's browser-only edition cannot
+access that Android app or selections in other browser/app fields.
 
 ## Contact
 

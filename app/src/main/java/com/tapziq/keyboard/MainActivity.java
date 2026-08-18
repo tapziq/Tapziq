@@ -39,6 +39,8 @@ public final class MainActivity extends Activity {
     private GemmaModelStore modelStore;
     private TextView learningStatusView;
     private Button clearLearningButton;
+    private TextView translationStatusView;
+    private Button translationActionButton;
     private AutocorrectLearningStore learningStore;
     private boolean modelOperationActive;
 
@@ -131,6 +133,31 @@ public final class MainActivity extends Activity {
         fieldParams.topMargin = dp(9);
         fieldParams.bottomMargin = dp(24);
         content.addView(testField, fieldParams);
+
+        content.addView(sectionTitle(getString(R.string.translation_setup_title)));
+        TextView translationBody = text(
+                getString(R.string.translation_setup_body),
+                15,
+                R.color.secondary_text,
+                Typeface.NORMAL
+        );
+        LinearLayout.LayoutParams translationBodyParams = wrapParams();
+        translationBodyParams.topMargin = dp(7);
+        translationBodyParams.bottomMargin = dp(10);
+        content.addView(translationBody, translationBodyParams);
+
+        translationStatusView = text("", 14, R.color.primary_text, Typeface.BOLD);
+        content.addView(translationStatusView, matchParams());
+
+        translationActionButton = secondaryButton(
+                getString(R.string.translation_app_install)
+        );
+        translationActionButton.setOnClickListener(view -> openOfflineTranslator());
+        LinearLayout.LayoutParams translationActionParams = buttonParams();
+        translationActionParams.topMargin = dp(10);
+        translationActionParams.bottomMargin = dp(22);
+        content.addView(translationActionButton, translationActionParams);
+        updateTranslationStatus();
 
         content.addView(sectionTitle(getString(R.string.model_title)));
         TextView modelBody = text(
@@ -270,6 +297,7 @@ public final class MainActivity extends Activity {
         if (!modelOperationActive) {
             updateModelStatus();
         }
+        updateTranslationStatus();
         updateLearningStatus();
     }
 
@@ -299,6 +327,37 @@ public final class MainActivity extends Activity {
                         count
                 ));
         clearLearningButton.setEnabled(hasStoredData);
+    }
+
+    private void updateTranslationStatus() {
+        if (translationStatusView == null || translationActionButton == null) {
+            return;
+        }
+        boolean available = OfflineTranslatorContract.isAvailable(this);
+        translationStatusView.setText(available
+                ? R.string.translation_app_ready
+                : R.string.translation_app_not_installed);
+        translationActionButton.setText(available
+                ? R.string.translation_app_open
+                : R.string.translation_app_install);
+    }
+
+    private void openOfflineTranslator() {
+        Intent intent = OfflineTranslatorContract.isAvailable(this)
+                ? OfflineTranslatorContract.launchIntent(this)
+                : null;
+        if (intent == null) {
+            intent = OfflineTranslatorContract.downloadIntent();
+        }
+        try {
+            startActivity(intent);
+        } catch (RuntimeException error) {
+            Toast.makeText(
+                    this,
+                    R.string.translation_app_open_failed,
+                    Toast.LENGTH_LONG
+            ).show();
+        }
     }
 
     private void confirmClearLearning() {
