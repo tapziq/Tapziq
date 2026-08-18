@@ -14,7 +14,9 @@ import com.google.ai.edge.litertlm.ThinkingConfig;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -48,18 +50,33 @@ final class GemmaProofreader implements AutoCloseable {
     private static final class InferenceRequest {
         final String text;
         final AutocorrectTarget autocorrectTarget;
+        final List<AutocorrectLearningMemory.Entry> autocorrectPreferences;
 
-        private InferenceRequest(String text, AutocorrectTarget autocorrectTarget) {
+        private InferenceRequest(
+                String text,
+                AutocorrectTarget autocorrectTarget,
+                List<AutocorrectLearningMemory.Entry> autocorrectPreferences
+        ) {
             this.text = text;
             this.autocorrectTarget = autocorrectTarget;
+            this.autocorrectPreferences = autocorrectPreferences;
         }
 
         static InferenceRequest proofread(String text) {
-            return new InferenceRequest(text, null);
+            return new InferenceRequest(text, null, Collections.emptyList());
         }
 
-        static InferenceRequest autocorrect(AutocorrectTarget target) {
-            return new InferenceRequest(target.text(), target);
+        static InferenceRequest autocorrect(
+                AutocorrectTarget target,
+                List<AutocorrectLearningMemory.Entry> preferences
+        ) {
+            return new InferenceRequest(
+                    target.text(),
+                    target,
+                    preferences == null
+                            ? Collections.emptyList()
+                            : Collections.unmodifiableList(new ArrayList<>(preferences))
+            );
         }
 
         String systemInstruction() {
@@ -71,7 +88,7 @@ final class GemmaProofreader implements AutoCloseable {
         String prompt() {
             return autocorrectTarget == null
                     ? GemmaProofreadPrompt.build(text)
-                    : GemmaAutocorrectPrompt.build(text);
+                    : GemmaAutocorrectPrompt.build(text, autocorrectPreferences);
         }
 
         String responseSchema() {
@@ -156,9 +173,10 @@ final class GemmaProofreader implements AutoCloseable {
     synchronized void autocorrect(
             File modelFile,
             AutocorrectTarget target,
+            List<AutocorrectLearningMemory.Entry> preferences,
             InferenceCallback callback
     ) {
-        submit(modelFile, InferenceRequest.autocorrect(target), callback);
+        submit(modelFile, InferenceRequest.autocorrect(target, preferences), callback);
     }
 
     private void submit(

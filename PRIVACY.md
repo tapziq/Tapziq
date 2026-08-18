@@ -1,6 +1,6 @@
 # Tapziq Privacy Notice
 
-Last updated: August 16, 2026
+Last updated: August 17, 2026
 
 This notice covers Tapziq's installed Android system keyboard. The separate PWA
 is governed by the [Tapziq browser privacy notice](web/PRIVACY.md); its virtual
@@ -14,8 +14,8 @@ Gemma 4 E2B-it model through the LiteRT-LM runtime.
 ## Text handling
 
 - Ordinary key presses go directly to the active Android text field. Tapziq does
-  not store typing history or read the clipboard. Gemma autocorrect is off by
-  default.
+  not store general typing history or read the clipboard. Gemma autocorrect and
+  correction learning are separate features and are both off by default.
 - When you tap **Proofread with Gemma 4**, Tapziq reads the active field and
   briefly hashes up to 2,000 characters in memory so it can verify that the
   field and selection have not changed before showing or applying a result.
@@ -34,12 +34,36 @@ Gemma 4 E2B-it model through the LiteRT-LM runtime.
 - The text and resulting suggestion are processed locally in Tapziq's process.
   Tapziq does not put editor text into a network request, URL, log, model
   download, analytics event, or crash report.
-- Tapziq keeps the text and suggestion only in memory long enough to show the
-  manual result or safely complete an enabled automatic check. Tapziq does not
-  save either one.
+- Unless correction learning is separately enabled, Tapziq keeps the text and
+  suggestion only in memory long enough to show the manual result or safely
+  complete an enabled automatic check. Tapziq does not save either one.
+- When **Learn from rejected Gemma corrections** is enabled, dismissing or typing
+  over a reviewed one-word result or immediately undoing an autocorrection stores
+  only the exact written and rejected word. In a compatible editor that reports
+  genuine view taps to Android IMEs, tapping a recent corrected word shows a
+  Tapziq-owned original-word candidate above the keyboard. Using it explicitly
+  reverses and rejects the Gemma correction; dismissing it or tapping away without
+  using it also stores the rejection. If the same word is then edited with
+  Tapziq, Tapziq can also store that replacement after a word boundary or after
+  the selection moves away. It does not store the surrounding sentence, field,
+  app/package identity, timestamp, or a general typing log in the persistent word
+  record.
+- To recognize a tap after typing continues, Tapziq keeps only the word mapping,
+  its range, and hashed short context for at most eight recent one-word
+  autocorrections plus the exact active-editor identity in memory. Each can start
+  a review for up to two minutes while that editor remains active. Once opened,
+  the anchored review and replacement session expires after 30 seconds without
+  related activity; lifecycle changes abort it rather than saving a partial word.
+- Correction memory is limited to 100 exact-case word-level records in
+  app-private storage. Relevant records are provided only to the on-device model
+  and exact rejected mappings are blocked before application. The setup screen
+  reports the record count and can clear the memory at any time. Disabling the
+  learning switch stops recording and using it but does not silently delete it.
 - Proofreading and Gemma autocorrect are disabled for password fields,
   email-address fields, URI fields, person-name fields, fields marked as not
   accepting suggestions, and non-text fields.
+- Correction learning also remains disabled whenever the editor sets Android's
+  `IME_FLAG_NO_PERSONALIZED_LEARNING` flag.
 
 ## Model storage and network access
 
@@ -57,6 +81,11 @@ ordinary apps and browsers cannot access the model directory. Android removes
 it when Tapziq is uninstalled, and the user can remove the model or a partial
 download from Tapziq's setup screen. The model is not included in Android cloud
 backup.
+
+Learned correction records are stored separately in app-private application
+preferences. Application backup and device transfer are disabled for all Tapziq
+data, and Android removes the records when Tapziq is uninstalled. Removing the
+model does not remove learned records; **Clear learned corrections** does.
 
 Tapziq does not operate its own analytics service, show ads, or sell user data.
 

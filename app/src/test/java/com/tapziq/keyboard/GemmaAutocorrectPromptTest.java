@@ -10,6 +10,9 @@ import com.google.gson.JsonParser;
 
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public final class GemmaAutocorrectPromptTest {
     @Test
     public void promptJsonEncodesUntrustedEditorTextAsData() {
@@ -38,6 +41,33 @@ public final class GemmaAutocorrectPromptTest {
         assertEquals("eh", edit.original());
         assertEquals("he", edit.suggestion());
         assertEquals("the word", edit.correctedText());
+    }
+
+    @Test
+    public void promptEncodesBoundedRelevantPreferencesAsData() {
+        List<AutocorrectLearningMemory.Entry> preferences = new ArrayList<>();
+        for (int index = 0; index < 10; index++) {
+            preferences.add(new AutocorrectLearningMemory.Entry(
+                    "word" + index,
+                    "edit" + index,
+                    index == 0 ? "rock’n-roll" : "word" + index
+            ));
+        }
+
+        String prompt = GemmaAutocorrectPrompt.build("Use word0", preferences);
+        JsonObject payload = JsonParser.parseString(
+                prompt.substring(prompt.indexOf('\n') + 1)
+        ).getAsJsonObject();
+
+        assertEquals("Use word0", payload.get("text").getAsString());
+        assertEquals(
+                AutocorrectLearningMemory.MAX_PROMPT_ENTRIES,
+                payload.getAsJsonArray("preferences").size()
+        );
+        JsonObject first = payload.getAsJsonArray("preferences").get(0).getAsJsonObject();
+        assertEquals("word0", first.get("written").getAsString());
+        assertEquals("edit0", first.get("rejected").getAsString());
+        assertEquals("rock’n-roll", first.get("preferred").getAsString());
     }
 
     @Test

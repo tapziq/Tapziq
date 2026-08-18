@@ -17,11 +17,17 @@ import android.view.inputmethod.ExtractedTextRequest;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 
+import java.util.ArrayDeque;
+import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
 public final class TapziqInputMethodService extends InputMethodService {
     private static final long RESULT_PROOFREAD_TIMEOUT_MS = TimeUnit.MINUTES.toMillis(2);
     private static final long AUTOCORRECT_DELAY_MS = 600L;
+    private static final long AUTOCORRECT_LEARNING_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(30);
+    private static final long RECENT_AUTOCORRECTION_TIMEOUT_NANOS = TimeUnit.MINUTES.toNanos(2);
+    private static final long EDITOR_TAP_SETTLE_MS = 75L;
+    private static final int MAX_RECENT_AUTOCORRECTIONS = 8;
     private KeyboardPanel keyboardPanel;
     private KeyboardLayouts.Mode mode = KeyboardLayouts.Mode.LETTERS;
     private boolean shifted;
@@ -33,15 +39,46 @@ public final class TapziqInputMethodService extends InputMethodService {
     private volatile Handler proofreadTimeoutHandler;
     private final Runnable proofreadTimeout = this::clearProofreadState;
     private final Runnable pendingAutocorrect = this::startPendingAutocorrect;
+    private final Runnable autocorrectLearningTimeout = this::clearAutocorrectLearningSession;
+    private final Runnable recentAutocorrectionExpiry = this::expireRecentAutocorrections;
+    private final Runnable editorTapSettled = this::settlePendingEditorTapForLearning;
     private final SharedPreferences.OnSharedPreferenceChangeListener autocorrectSettingsListener =
             (preferences, key) -> {
-                if (!AutocorrectSettings.isEnabledPreference(key)
-                        || AutocorrectSettings.isEnabled(this)) {
+                boolean disabledAutocorrect = AutocorrectSettings.isEnabledPreference(key)
+                        && !AutocorrectSettings.isEnabled(this);
+                boolean disabledLearning = AutocorrectSettings.isLearningEnabledPreference(key)
+                        && !AutocorrectSettings.isLearningEnabled(this);
+                if (!disabledAutocorrect && !disabledLearning) {
                     return;
                 }
                 Handler handler = proofreadTimeoutHandler;
                 if (handler != null) {
-                    handler.post(this::disableAutocorrectImmediately);
+                    handler.post(() -> {
+                        if (disabledAutocorrect) {
+                            disableAutocorrectImmediately();
+                        }
+                        if (disabledLearning) {
+                            clearAutocorrectLearningSession();
+                            clearRecentAutocorrections();
+                            // A request already owns a copy of the preferences that were
+                            // enabled when it started, so opt-out must cancel that request too.
+                            cancelAutocorrectRequest();
+                        }
+                    });
+                }
+            };
+    private final SharedPreferences.OnSharedPreferenceChangeListener learningMemoryListener =
+            (preferences, key) -> {
+                if (!AutocorrectLearningStore.isClearPreference(key)) {
+                    return;
+                }
+                Handler handler = proofreadTimeoutHandler;
+                if (handler != null) {
+                    handler.post(() -> {
+                        clearAutocorrectLearningSession();
+                        clearRecentAutocorrections();
+                        cancelAutocorrectRequest();
+                    });
                 }
             };
     private GemmaModelStore autocorrectModelStore;
@@ -50,14 +87,36 @@ public final class TapziqInputMethodService extends InputMethodService {
     private InputConnection autocorrectConnection;
     private EditorInfo autocorrectEditorInfo;
     private AutocorrectEdit autocorrectUndo;
+    private RecentAutocorrection autocorrectUndoRecent;
     private String pendingAutocorrectBoundary;
     private int autocorrectOperationId;
     private boolean showingAutocorrectNotice;
+    private boolean showingAutocorrectSuggestion;
+    private boolean pendingEditorTap;
+    private AutocorrectLearningStore autocorrectLearningStore;
+    private AutocorrectLearningSession autocorrectLearningSession;
+    private InputConnection autocorrectLearningConnection;
+    private EditorInfo autocorrectLearningEditorInfo;
+    private boolean autocorrectLearningSawTapziqKey;
+    private boolean autocorrectLearningFromTappedCorrection;
+    private boolean autocorrectLearningRejectionRecorded;
+    private String autocorrectLearningLastObservedDocument;
+    private String autocorrectLearningPreparedDocument;
+    private int autocorrectLearningPreparedSelectionStart = -1;
+    private int autocorrectLearningPreparedSelectionEnd = -1;
+    private String autocorrectLearningExpectedTapziqDocument;
+    private RecentAutocorrection autocorrectLearningRecentCorrection;
+    private final ArrayDeque<RecentAutocorrection> recentAutocorrections = new ArrayDeque<>();
+    private EditorIdentity recentAutocorrectionEditor;
+    private InputConnection recentAutocorrectionConnection;
+    private EditorInfo recentAutocorrectionEditorInfo;
 
     @Override
     public void onCreate() {
         super.onCreate();
         proofreadTimeoutHandler = new Handler(Looper.getMainLooper());
+        autocorrectLearningStore = new AutocorrectLearningStore(this);
+        autocorrectLearningStore.registerClearListener(learningMemoryListener);
         AutocorrectSettings.registerListener(this, autocorrectSettingsListener);
         ProofreadSession.setListener(this::onProofreadSessionChanged);
     }
@@ -77,7 +136,17 @@ public final class TapziqInputMethodService extends InputMethodService {
 
             @Override
             public void onDismissProofread() {
-                clearProofreadState();
+                dismissProofreadSuggestionForLearning();
+            }
+
+            @Override
+            public void onUseAutocorrectOriginal() {
+                useAutocorrectOriginalSuggestion();
+            }
+
+            @Override
+            public void onDismissAutocorrectSuggestion() {
+                dismissAutocorrectSuggestionForLearning();
             }
         });
         renderKeyboard();
@@ -87,8 +156,15 @@ public final class TapziqInputMethodService extends InputMethodService {
     @Override
     public void onStartInputView(EditorInfo attribute, boolean restarting) {
         super.onStartInputView(attribute, restarting);
+        clearAutocorrectLearningSession();
+        if (!recentAutocorrectionContextMatches(
+                attribute,
+                getCurrentInputConnection()
+        )) {
+            clearRecentAutocorrections();
+        }
         cancelAutocorrectRequest();
-        autocorrectUndo = null;
+        clearAutocorrectUndo();
         editorInfo = attribute;
         mode = EditorBehavior.initialMode(attribute.inputType);
         shifted = shouldStartShifted(attribute);
@@ -110,10 +186,12 @@ public final class TapziqInputMethodService extends InputMethodService {
 
     @Override
     public void onFinishInput() {
+        clearAutocorrectLearningSession();
+        clearRecentAutocorrections();
         super.onFinishInput();
         cancelAutocorrectRequest();
         closeAutocorrectProofreader();
-        autocorrectUndo = null;
+        clearAutocorrectUndo();
         editorInfo = null;
         mode = KeyboardLayouts.Mode.LETTERS;
         shifted = false;
@@ -124,18 +202,20 @@ public final class TapziqInputMethodService extends InputMethodService {
 
     @Override
     public void onFinishInputView(boolean finishingInput) {
+        clearAutocorrectLearningSession();
         cancelAutocorrectRequest();
         closeAutocorrectProofreader();
-        autocorrectUndo = null;
+        clearAutocorrectUndo();
         hideAutocorrectNotice();
         super.onFinishInputView(finishingInput);
     }
 
     @Override
     public void onWindowHidden() {
+        clearAutocorrectLearningSession();
         cancelAutocorrectRequest();
         closeAutocorrectProofreader();
-        autocorrectUndo = null;
+        clearAutocorrectUndo();
         hideAutocorrectNotice();
         super.onWindowHidden();
     }
@@ -152,11 +232,27 @@ public final class TapziqInputMethodService extends InputMethodService {
     }
 
     private void handleKey(KeyboardLayouts.KeySpec key) {
+        // A key can arrive during the short selection-settle delay after a word tap. Resolve the
+        // tap first so the ensuing Tapziq-owned edit is never lost or mistaken for a partial word.
+        settlePendingEditorTapForLearning();
+        if (showingAutocorrectSuggestion && changesEditorText(key.action)) {
+            hideAutocorrectSuggestion();
+        }
+        if (proofreadSuggestion != null && changesEditorText(key.action)) {
+            // Typing over a reviewed result is the same Tapziq-owned rejection signal as ×.
+            dismissProofreadSuggestionForLearning();
+        }
         if (key.action == KeyboardLayouts.Action.DELETE && undoLastAutocorrect()) {
             return;
         }
+        if (changesEditorText(key.action)) {
+            prepareEditorMutationForLearning(getCurrentInputConnection());
+        }
+        if (isLearningBoundary(key)) {
+            observeAutocorrectLearning(true, false);
+        }
         cancelAutocorrectRequest();
-        autocorrectUndo = null;
+        clearAutocorrectUndo();
         hideAutocorrectNotice();
 
         switch (key.action) {
@@ -214,7 +310,12 @@ public final class TapziqInputMethodService extends InputMethodService {
 
     private boolean commitText(String text) {
         InputConnection connection = getCurrentInputConnection();
-        return connection != null && connection.commitText(text, 1);
+        expectTapziqReplacement(connection, text);
+        boolean committed = connection != null && connection.commitText(text, 1);
+        if (committed) {
+            observeEditorMutationForLearning(connection);
+        }
+        return committed;
     }
 
     private void deleteBeforeCursor() {
@@ -225,12 +326,22 @@ public final class TapziqInputMethodService extends InputMethodService {
 
         CharSequence selection = connection.getSelectedText(0);
         if (selection != null && selection.length() > 0) {
-            connection.commitText("", 1);
+            expectTapziqReplacement(connection, "");
+            if (connection.commitText("", 1)) {
+                observeEditorMutationForLearning(connection);
+            }
             return;
         }
 
-        if (!connection.deleteSurroundingTextInCodePoints(1, 0)) {
+        expectTapziqDeleteBeforeCursor(connection);
+        boolean deleted = connection.deleteSurroundingTextInCodePoints(1, 0);
+        if (!deleted) {
             sendKey(connection, KeyEvent.KEYCODE_DEL);
+            // sendKeyEvent is the owned fallback for editors that reject surrounding-text
+            // deletion. Observe its resulting document just like the direct path.
+            observeEditorMutationForLearning(connection);
+        } else {
+            observeEditorMutationForLearning(connection);
         }
     }
 
@@ -252,7 +363,12 @@ public final class TapziqInputMethodService extends InputMethodService {
         }
 
         if (EditorBehavior.isMultiline(current.inputType)) {
-            return connection.commitText("\n", 1);
+            expectTapziqReplacement(connection, "\n");
+            boolean committed = connection.commitText("\n", 1);
+            if (committed) {
+                observeEditorMutationForLearning(connection);
+            }
+            return committed;
         } else {
             sendKey(connection, KeyEvent.KEYCODE_ENTER);
             return false;
@@ -263,6 +379,20 @@ public final class TapziqInputMethodService extends InputMethodService {
         long now = System.currentTimeMillis();
         connection.sendKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0));
         connection.sendKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0));
+    }
+
+    private static boolean changesEditorText(KeyboardLayouts.Action action) {
+        return action == KeyboardLayouts.Action.TEXT
+                || action == KeyboardLayouts.Action.SPACE
+                || action == KeyboardLayouts.Action.DELETE
+                || action == KeyboardLayouts.Action.ENTER;
+    }
+
+    private static boolean isLearningBoundary(KeyboardLayouts.KeySpec key) {
+        return key.action == KeyboardLayouts.Action.SPACE
+                || key.action == KeyboardLayouts.Action.ENTER
+                || (key.action == KeyboardLayouts.Action.TEXT
+                        && AutocorrectTarget.isSupportedBoundary(key.text));
     }
 
     private void scheduleAutocorrect(String committedBoundary) {
@@ -329,11 +459,21 @@ public final class TapziqInputMethodService extends InputMethodService {
         autocorrectTarget = capture.target;
         autocorrectConnection = connection;
         autocorrectEditorInfo = sourceEditorInfo;
+        java.util.List<AutocorrectLearningMemory.Entry> learningPreferences =
+                AutocorrectSettings.isLearningEnabled(this)
+                        && autocorrectLearningStore != null
+                        ? autocorrectLearningStore.relevantTo(capture.target.text())
+                        : java.util.Collections.emptyList();
+        boolean usedLearningPreferences = !learningPreferences.isEmpty();
+        long learningClearGeneration = usedLearningPreferences
+                ? autocorrectLearningStore.clearGeneration()
+                : 0L;
         int operationId = autocorrectOperationId;
         try {
             autocorrectProofreader.autocorrect(
                     modelFile,
                     capture.target,
+                    learningPreferences,
                     new GemmaProofreader.InferenceCallback() {
                         @Override
                         public void onSuggestion(String suggestion) {
@@ -342,6 +482,8 @@ public final class TapziqInputMethodService extends InputMethodService {
                                     capture.target,
                                     connection,
                                     sourceEditorInfo,
+                                    usedLearningPreferences,
+                                    learningClearGeneration,
                                     suggestion
                             );
                         }
@@ -364,6 +506,8 @@ public final class TapziqInputMethodService extends InputMethodService {
             AutocorrectTarget target,
             InputConnection sourceConnection,
             EditorInfo sourceEditorInfo,
+            boolean usedLearningPreferences,
+            long learningClearGeneration,
             String suggestion
     ) {
         if (operationId != autocorrectOperationId
@@ -372,6 +516,11 @@ public final class TapziqInputMethodService extends InputMethodService {
                 || sourceEditorInfo != autocorrectEditorInfo
                 || !isInputViewShown()
                 || !AutocorrectSettings.isEnabled(this)
+                || (usedLearningPreferences && !AutocorrectSettings.isLearningEnabled(this))
+                || (usedLearningPreferences
+                        && (autocorrectLearningStore == null
+                                || learningClearGeneration
+                                        != autocorrectLearningStore.clearGeneration()))
                 || !EditorBehavior.supportsProofreading(editorInfo)
                 || proofreadSessionId != 0
                 || proofreadSuggestion != null) {
@@ -391,14 +540,24 @@ public final class TapziqInputMethodService extends InputMethodService {
         }
 
         AutocorrectEdit edit = validation.edit;
+        if (AutocorrectSettings.isLearningEnabled(this)
+                && autocorrectLearningStore != null
+                && autocorrectLearningStore.rejects(edit)) {
+            finishAutocorrectRequest(operationId);
+            return;
+        }
         AutocorrectApplier.Result result = AutocorrectApplier.apply(connection, edit);
         finishAutocorrectRequest(operationId);
-        if (result == AutocorrectApplier.Result.APPLIED) {
+        if (result.textApplied()) {
             autocorrectUndo = edit;
+            // Tapziq owns the candidate bar, so editor support for CorrectionInfo is optional.
+            autocorrectUndoRecent = trackRecentAutocorrection(edit);
             showingAutocorrectNotice = true;
             if (keyboardPanel != null) {
                 keyboardPanel.showProofreadMessage(
-                        getString(R.string.autocorrect_applied),
+                        getString(autocorrectUndoRecent == null
+                                ? R.string.autocorrect_applied
+                                : R.string.autocorrect_applied_review),
                         true
                 );
             }
@@ -410,20 +569,25 @@ public final class TapziqInputMethodService extends InputMethodService {
         if (edit == null) {
             return false;
         }
+        RecentAutocorrection undoneRecent = autocorrectUndoRecent;
         cancelAutocorrectRequest();
         InputConnection connection = getCurrentInputConnection();
         AutocorrectApplier.Result result = connection == null
                 ? AutocorrectApplier.Result.STALE
                 : AutocorrectApplier.undo(connection, edit);
-        autocorrectUndo = null;
-        if (result != AutocorrectApplier.Result.APPLIED) {
+        clearAutocorrectUndo();
+        if (!result.textApplied()) {
             hideAutocorrectNotice();
             return false;
         }
+        removeRecentAutocorrection(undoneRecent);
+        boolean rejectionRemembered = beginAutocorrectLearning(edit, connection);
         showingAutocorrectNotice = true;
         if (keyboardPanel != null) {
             keyboardPanel.showProofreadMessage(
-                    getString(R.string.autocorrect_reverted),
+                    getString(rejectionRemembered
+                            ? R.string.autocorrect_reverted_learned
+                            : R.string.autocorrect_reverted),
                     true
             );
         }
@@ -478,16 +642,721 @@ public final class TapziqInputMethodService extends InputMethodService {
         }
         cancelAutocorrectRequest();
         closeAutocorrectProofreader();
-        autocorrectUndo = null;
+        clearAutocorrectUndo();
         hideAutocorrectNotice();
+    }
+
+    private void dismissProofreadSuggestionForLearning() {
+        ProofreadTarget target = proofreadTarget;
+        String suggestion = proofreadSuggestion;
+        InputConnection connection = getCurrentInputConnection();
+        ExtractedText current = completeLearningSnapshot(connection);
+        if (target != null
+                && suggestion != null
+                && AutocorrectSettings.isLearningEnabled(this)
+                && EditorBehavior.supportsProofreading(editorInfo)
+                && connection != null
+                && proofreadEditor != null
+                && proofreadEditor.matches(
+                        getCurrentInputBinding(),
+                        editorInfo,
+                        connection
+                )
+                && current != null
+                && target.matchesDocument(current)
+                && autocorrectLearningStore != null) {
+            AutocorrectLearning.Feedback feedback = AutocorrectLearning.fromSuggestion(
+                    target.text,
+                    suggestion
+            );
+            if (feedback != null) {
+                autocorrectLearningStore.recordRejection(feedback);
+                beginAutocorrectLearningSession(
+                        feedback,
+                        target.start() + feedback.sourceStart,
+                        target.start() + feedback.sourceEnd,
+                        current,
+                        connection,
+                        false,
+                        true,
+                        null
+                );
+            }
+        }
+        clearProofreadState();
+    }
+
+    private boolean beginAutocorrectLearning(
+            AutocorrectEdit edit,
+            InputConnection connection
+    ) {
+        if (!AutocorrectSettings.isLearningEnabled(this)
+                || !EditorBehavior.supportsProofreading(editorInfo)
+                || autocorrectLearningStore == null
+                || connection == null) {
+            return false;
+        }
+        AutocorrectLearning.Feedback feedback = AutocorrectLearning.fromEdit(edit);
+        if (feedback == null) {
+            return false;
+        }
+        autocorrectLearningStore.recordRejection(feedback);
+        ExtractedText current = completeLearningSnapshot(connection);
+        if (current == null || !edit.matches(current)) {
+            return true;
+        }
+        beginAutocorrectLearningSession(
+                feedback,
+                feedback.sourceStart,
+                feedback.sourceEnd,
+                current,
+                connection,
+                false,
+                true,
+                null
+        );
+        return true;
+    }
+
+    private void beginAutocorrectLearningSession(
+            AutocorrectLearning.Feedback feedback,
+            int sourceStart,
+            int sourceEnd,
+            ExtractedText current,
+            InputConnection connection,
+            boolean baselineIsRejected,
+            boolean rejectionAlreadyRecorded,
+            RecentAutocorrection recentCorrection
+    ) {
+        if (connection == null || editorInfo == null) {
+            return;
+        }
+        AutocorrectLearningSession session = AutocorrectLearningSession.begin(
+                current.text.toString(),
+                sourceStart,
+                sourceEnd,
+                feedback,
+                baselineIsRejected
+        );
+        if (session == null) {
+            return;
+        }
+        autocorrectLearningSession = session;
+        autocorrectLearningConnection = connection;
+        autocorrectLearningEditorInfo = editorInfo;
+        autocorrectLearningSawTapziqKey = false;
+        autocorrectLearningFromTappedCorrection = baselineIsRejected;
+        autocorrectLearningRejectionRecorded = rejectionAlreadyRecorded;
+        autocorrectLearningLastObservedDocument = current.text.toString();
+        clearPreparedAutocorrectLearningMutation();
+        autocorrectLearningRecentCorrection = recentCorrection;
+        scheduleAutocorrectLearningExpiry();
+    }
+
+    private void prepareEditorMutationForLearning(InputConnection connection) {
+        if (autocorrectLearningSession == null) {
+            return;
+        }
+        if (connection == null
+                || connection != autocorrectLearningConnection
+                || editorInfo == null
+                || editorInfo != autocorrectLearningEditorInfo) {
+            clearAutocorrectLearningSession();
+            return;
+        }
+        ExtractedText current = completeLearningSnapshot(connection);
+        if (current == null
+                || autocorrectLearningLastObservedDocument == null
+                || !autocorrectLearningLastObservedDocument.contentEquals(current.text)) {
+            // An editor-side suggestion or another unobserved mutation breaks the causal link.
+            clearAutocorrectLearningSession();
+            return;
+        }
+        autocorrectLearningPreparedDocument = current.text.toString();
+        autocorrectLearningPreparedSelectionStart = current.selectionStart;
+        autocorrectLearningPreparedSelectionEnd = current.selectionEnd;
+        autocorrectLearningExpectedTapziqDocument = null;
+    }
+
+    private void expectTapziqReplacement(InputConnection connection, String replacement) {
+        if (autocorrectLearningSession == null
+                || connection == null
+                || connection != autocorrectLearningConnection
+                || autocorrectLearningPreparedDocument == null
+                || replacement == null) {
+            return;
+        }
+        String expected = AutocorrectLearningMutation.replacement(
+                autocorrectLearningPreparedDocument,
+                autocorrectLearningPreparedSelectionStart,
+                autocorrectLearningPreparedSelectionEnd,
+                replacement
+        );
+        if (expected == null) {
+            clearAutocorrectLearningSession();
+            return;
+        }
+        autocorrectLearningExpectedTapziqDocument = expected;
+    }
+
+    private void expectTapziqDeleteBeforeCursor(InputConnection connection) {
+        if (autocorrectLearningSession == null
+                || connection == null
+                || connection != autocorrectLearningConnection
+                || autocorrectLearningPreparedDocument == null) {
+            return;
+        }
+        String expected = AutocorrectLearningMutation.deleteBeforeCursor(
+                autocorrectLearningPreparedDocument,
+                autocorrectLearningPreparedSelectionStart,
+                autocorrectLearningPreparedSelectionEnd
+        );
+        if (expected == null) {
+            clearAutocorrectLearningSession();
+            return;
+        }
+        autocorrectLearningExpectedTapziqDocument = expected;
+    }
+
+    private void clearPreparedAutocorrectLearningMutation() {
+        autocorrectLearningPreparedDocument = null;
+        autocorrectLearningPreparedSelectionStart = -1;
+        autocorrectLearningPreparedSelectionEnd = -1;
+        autocorrectLearningExpectedTapziqDocument = null;
+    }
+
+    private void observeEditorMutationForLearning(InputConnection connection) {
+        observeEditorMutationForRecentAutocorrections(connection);
+        if (autocorrectLearningSession == null) {
+            return;
+        }
+        observeAutocorrectLearning(connection, false, false, true);
+    }
+
+    private void observeAutocorrectLearning(
+            boolean finalize,
+            boolean keepWhileSelectionTouchesReplacement
+    ) {
+        observeAutocorrectLearning(
+                getCurrentInputConnection(),
+                finalize,
+                keepWhileSelectionTouchesReplacement
+        );
+    }
+
+    private void observeAutocorrectLearning(
+            InputConnection connection,
+            boolean finalize,
+            boolean keepWhileSelectionTouchesReplacement
+    ) {
+        observeAutocorrectLearning(
+                connection,
+                finalize,
+                keepWhileSelectionTouchesReplacement,
+                false
+        );
+    }
+
+    private void observeAutocorrectLearning(
+            InputConnection connection,
+            boolean finalize,
+            boolean keepWhileSelectionTouchesReplacement,
+            boolean afterTapziqMutation
+    ) {
+        AutocorrectLearningSession session = autocorrectLearningSession;
+        if (session == null) {
+            return;
+        }
+        if (!AutocorrectSettings.isLearningEnabled(this)
+                || !EditorBehavior.supportsProofreading(editorInfo)
+                || connection == null
+                || connection != autocorrectLearningConnection
+                || editorInfo == null
+                || editorInfo != autocorrectLearningEditorInfo) {
+            clearAutocorrectLearningSession();
+            return;
+        }
+        ExtractedText current = completeLearningSnapshot(connection);
+        if (current == null) {
+            clearAutocorrectLearningSession();
+            return;
+        }
+        String currentDocument = current.text.toString();
+        if (!afterTapziqMutation
+                && autocorrectLearningSawTapziqKey
+                && !currentDocument.equals(autocorrectLearningLastObservedDocument)) {
+            // The user accepted or triggered an editor-side change after a Tapziq key.
+            clearAutocorrectLearningSession();
+            return;
+        }
+        if (afterTapziqMutation) {
+            if (autocorrectLearningExpectedTapziqDocument == null
+                    || !autocorrectLearningExpectedTapziqDocument.equals(currentDocument)) {
+                // A synchronous InputFilter, editor suggestion, or no-op connection changed the
+                // operation. Only the exact Tapziq key transformation is attributable to Tapziq.
+                clearAutocorrectLearningSession();
+                return;
+            }
+            autocorrectLearningSawTapziqKey = true;
+            autocorrectLearningLastObservedDocument = currentDocument;
+            clearPreparedAutocorrectLearningMutation();
+        }
+        AutocorrectLearningSession.Observation observation = session.observe(
+                currentDocument,
+                current.selectionStart,
+                current.selectionEnd,
+                finalize,
+                keepWhileSelectionTouchesReplacement
+        );
+        AutocorrectLearningSession.Decision decision = AutocorrectLearningSession.decide(
+                observation,
+                autocorrectLearningFromTappedCorrection,
+                autocorrectLearningRejectionRecorded,
+                autocorrectLearningSawTapziqKey
+        );
+        if (autocorrectLearningStore != null) {
+            if (decision.recordRejection) {
+                autocorrectLearningStore.recordRejection(session.feedback());
+                autocorrectLearningRejectionRecorded = true;
+            }
+            if (decision.recordReplacement) {
+                autocorrectLearningStore.recordReplacement(
+                        session.feedback(),
+                        observation.replacement
+                );
+            } else if (decision.forgetRejection) {
+                // The user independently typed the former suggestion, so it is no longer rejected.
+                autocorrectLearningStore.forget(session.feedback());
+            }
+        }
+        if (decision.keepSession) {
+            // The unchanged tap-away is the rejection signal. Keep a short, bounded
+            // same-word session so a replacement the user types next can still be learned.
+            scheduleAutocorrectLearningExpiry();
+            return;
+        }
+        clearAutocorrectLearningSession();
+    }
+
+    private void clearAutocorrectLearningSession() {
+        Handler handler = proofreadTimeoutHandler;
+        if (handler != null) {
+            handler.removeCallbacks(autocorrectLearningTimeout);
+        }
+        autocorrectLearningSession = null;
+        autocorrectLearningConnection = null;
+        autocorrectLearningEditorInfo = null;
+        autocorrectLearningSawTapziqKey = false;
+        autocorrectLearningFromTappedCorrection = false;
+        autocorrectLearningRejectionRecorded = false;
+        autocorrectLearningLastObservedDocument = null;
+        clearPreparedAutocorrectLearningMutation();
+        autocorrectLearningRecentCorrection = null;
+        hideAutocorrectSuggestion();
+    }
+
+    private void scheduleAutocorrectLearningExpiry() {
+        Handler handler = proofreadTimeoutHandler;
+        if (handler == null) {
+            clearAutocorrectLearningSession();
+            return;
+        }
+        handler.removeCallbacks(autocorrectLearningTimeout);
+        handler.postDelayed(autocorrectLearningTimeout, AUTOCORRECT_LEARNING_TIMEOUT_MS);
+    }
+
+    private ExtractedText completeLearningSnapshot(InputConnection connection) {
+        if (connection == null) {
+            return null;
+        }
+        ExtractedText current = connection.getExtractedText(extractedTextRequest(), 0);
+        if (current == null
+                || current.text == null
+                || current.startOffset != 0
+                || current.partialStartOffset >= 0
+                || current.text.length() > ProofreadTarget.MAX_SNAPSHOT_CHARACTERS
+                || AutocorrectTarget.hasNonEphemeralSpans(current.text)) {
+            return null;
+        }
+        return current;
+    }
+
+    private RecentAutocorrection trackRecentAutocorrection(AutocorrectEdit edit) {
+        if (!AutocorrectSettings.isLearningEnabled(this)
+                || !EditorBehavior.supportsProofreading(editorInfo)) {
+            return null;
+        }
+        RecentAutocorrection recent = RecentAutocorrection.from(edit);
+        if (recent == null) {
+            return null;
+        }
+        InputConnection connection = getCurrentInputConnection();
+        if (connection == null || editorInfo == null) {
+            return null;
+        }
+        if (!recentAutocorrections.isEmpty()
+                && !recentAutocorrectionContextMatches(editorInfo, connection)) {
+            clearRecentAutocorrections();
+        }
+        recentAutocorrectionEditor = EditorIdentity.capture(
+                getCurrentInputBinding(),
+                editorInfo,
+                connection
+        );
+        recentAutocorrectionConnection = connection;
+        recentAutocorrectionEditorInfo = editorInfo;
+        recentAutocorrections.addFirst(recent);
+        while (recentAutocorrections.size() > MAX_RECENT_AUTOCORRECTIONS) {
+            recentAutocorrections.removeLast();
+        }
+        scheduleRecentAutocorrectionExpiry();
+        return recent;
+    }
+
+    private void clearRecentAutocorrections() {
+        Handler handler = proofreadTimeoutHandler;
+        if (handler != null) {
+            handler.removeCallbacks(recentAutocorrectionExpiry);
+            handler.removeCallbacks(editorTapSettled);
+        }
+        pendingEditorTap = false;
+        recentAutocorrections.clear();
+        recentAutocorrectionEditor = null;
+        recentAutocorrectionConnection = null;
+        recentAutocorrectionEditorInfo = null;
+        autocorrectUndoRecent = null;
+    }
+
+    private void clearAutocorrectUndo() {
+        autocorrectUndo = null;
+        autocorrectUndoRecent = null;
+    }
+
+    private void removeRecentAutocorrection(RecentAutocorrection recent) {
+        if (recent == null) {
+            return;
+        }
+        recentAutocorrections.remove(recent);
+        if (autocorrectLearningRecentCorrection == recent) {
+            clearAutocorrectLearningSession();
+        }
+        if (recentAutocorrections.isEmpty()) {
+            Handler handler = proofreadTimeoutHandler;
+            if (handler != null) {
+                handler.removeCallbacks(recentAutocorrectionExpiry);
+            }
+            recentAutocorrectionEditor = null;
+            recentAutocorrectionConnection = null;
+            recentAutocorrectionEditorInfo = null;
+        } else {
+            scheduleRecentAutocorrectionExpiry();
+        }
+    }
+
+    private void expireRecentAutocorrections() {
+        long nowNanos = System.nanoTime();
+        Iterator<RecentAutocorrection> iterator = recentAutocorrections.iterator();
+        while (iterator.hasNext()) {
+            RecentAutocorrection recent = iterator.next();
+            if (recent.isExpired(nowNanos, RECENT_AUTOCORRECTION_TIMEOUT_NANOS)) {
+                iterator.remove();
+                // Expiry prevents a new tap from starting a review. A review that the user
+                // already opened owns its anchored candidate until its separate 30-second
+                // session expires, so Use and replacement learning remain coherent.
+                releaseRecentAutocorrectionAliases(recent, true);
+            }
+        }
+        if (recentAutocorrections.isEmpty()) {
+            recentAutocorrectionEditor = null;
+            recentAutocorrectionConnection = null;
+            recentAutocorrectionEditorInfo = null;
+        } else {
+            scheduleRecentAutocorrectionExpiry();
+        }
+    }
+
+    private void scheduleRecentAutocorrectionExpiry() {
+        Handler handler = proofreadTimeoutHandler;
+        RecentAutocorrection oldest = recentAutocorrections.peekLast();
+        if (handler == null || oldest == null) {
+            return;
+        }
+        handler.removeCallbacks(recentAutocorrectionExpiry);
+        long expiresAtNanos = oldest.createdAtNanos() + RECENT_AUTOCORRECTION_TIMEOUT_NANOS;
+        long remainingNanos = expiresAtNanos - System.nanoTime();
+        long delayMillis = Math.max(
+                1L,
+                TimeUnit.NANOSECONDS.toMillis(Math.max(0L, remainingNanos - 1L)) + 1L
+        );
+        handler.postDelayed(recentAutocorrectionExpiry, delayMillis);
+    }
+
+    private boolean recentAutocorrectionContextMatches(
+            EditorInfo currentEditorInfo,
+            InputConnection currentConnection
+    ) {
+        if (recentAutocorrections.isEmpty()) {
+            return true;
+        }
+        if (currentEditorInfo == null
+                || currentConnection == null
+                || recentAutocorrectionConnection == null
+                || recentAutocorrectionEditorInfo == null) {
+            return false;
+        }
+        if (recentAutocorrectionEditor != null) {
+            return recentAutocorrectionEditor.matches(
+                    getCurrentInputBinding(),
+                    currentEditorInfo,
+                    currentConnection
+            );
+        }
+        // Some native editors expose no stable field ID. Keep their bounded evidence only while
+        // Android preserves the exact connection and EditorInfo objects for this input session.
+        return currentConnection == recentAutocorrectionConnection
+                && currentEditorInfo == recentAutocorrectionEditorInfo;
+    }
+
+    private RecentAutocorrection recentAutocorrectionAt(ExtractedText current) {
+        if (current == null || current.text == null) {
+            return null;
+        }
+        pruneRecentAutocorrections(current, false);
+        for (RecentAutocorrection recent : recentAutocorrections) {
+            if (recent.matches(
+                    current.text,
+                    current.startOffset,
+                    current.selectionStart,
+                    current.selectionEnd,
+                    true
+            )) {
+                return recent;
+            }
+        }
+        return null;
+    }
+
+    private void observeEditorMutationForRecentAutocorrections(InputConnection connection) {
+        if (recentAutocorrections.isEmpty()) {
+            return;
+        }
+        if (!recentAutocorrectionContextMatches(editorInfo, connection)) {
+            clearRecentAutocorrections();
+            return;
+        }
+        ExtractedText current = completeLearningSnapshot(connection);
+        if (current == null) {
+            clearRecentAutocorrections();
+            return;
+        }
+        pruneRecentAutocorrections(current, true);
+    }
+
+    private void pruneRecentAutocorrections(
+            ExtractedText current,
+            boolean preserveActiveSessionAfterOwnedMutation
+    ) {
+        long nowNanos = System.nanoTime();
+        Iterator<RecentAutocorrection> iterator = recentAutocorrections.iterator();
+        while (iterator.hasNext()) {
+            RecentAutocorrection recent = iterator.next();
+            boolean expired = recent.isExpired(
+                    nowNanos,
+                    RECENT_AUTOCORRECTION_TIMEOUT_NANOS
+            );
+            if (expired || !recent.matchesDocument(current.text, current.startOffset, true)) {
+                iterator.remove();
+                releaseRecentAutocorrectionAliases(
+                        recent,
+                        expired || preserveActiveSessionAfterOwnedMutation
+                );
+            }
+        }
+        if (recentAutocorrections.isEmpty()) {
+            Handler handler = proofreadTimeoutHandler;
+            if (handler != null) {
+                handler.removeCallbacks(recentAutocorrectionExpiry);
+            }
+            recentAutocorrectionEditor = null;
+            recentAutocorrectionConnection = null;
+            recentAutocorrectionEditorInfo = null;
+        } else {
+            scheduleRecentAutocorrectionExpiry();
+        }
+    }
+
+    private void releaseRecentAutocorrectionAliases(
+            RecentAutocorrection recent,
+            boolean preserveActiveSession
+    ) {
+        if (autocorrectUndoRecent == recent) {
+            autocorrectUndoRecent = null;
+        }
+        if (autocorrectLearningRecentCorrection == recent) {
+            if (!preserveActiveSession) {
+                clearAutocorrectLearningSession();
+            }
+            // When preserved, the queue evidence is no longer tappable, but the already opened
+            // session keeps this exact anchored candidate until its own bounded timeout. This
+            // keeps both Use and the Tapziq-authored replacement path valid.
+        }
+    }
+
+    private void handleUserEditorTapForLearning() {
+        if (proofreadSuggestion != null) {
+            // This is a Tapziq-owned reviewed result. An editor tap instead of Apply rejects it.
+            dismissProofreadSuggestionForLearning();
+            return;
+        }
+        if (!AutocorrectSettings.isLearningEnabled(this)
+                || !EditorBehavior.supportsProofreading(editorInfo)
+                || autocorrectLearningStore == null) {
+            clearAutocorrectLearningSession();
+            clearRecentAutocorrections();
+            return;
+        }
+
+        InputConnection connection = getCurrentInputConnection();
+        if (!recentAutocorrectionContextMatches(editorInfo, connection)) {
+            clearAutocorrectLearningSession();
+            clearRecentAutocorrections();
+            return;
+        }
+        ExtractedText current = completeLearningSnapshot(connection);
+        if (current == null) {
+            clearAutocorrectLearningSession();
+            clearRecentAutocorrections();
+            return;
+        }
+        RecentAutocorrection tappedCorrection = recentAutocorrectionAt(current);
+        if (tappedCorrection == null
+                && autocorrectLearningRecentCorrection != null
+                && autocorrectLearningRecentCorrection.matches(
+                        current.text,
+                        current.startOffset,
+                        current.selectionStart,
+                        current.selectionEnd,
+                        true
+                )) {
+            // The two-minute queue TTL blocks new reviews, but an already opened review owns
+            // its candidate for its separate 30-second session. A related tap on that same word
+            // should therefore keep/re-show the still-valid Tapziq candidate.
+            tappedCorrection = autocorrectLearningRecentCorrection;
+        }
+
+        if (autocorrectLearningSession != null) {
+            hideAutocorrectSuggestion();
+            observeAutocorrectLearning(connection, true, true);
+            if (autocorrectLearningSession != null) {
+                if (tappedCorrection != null
+                        && tappedCorrection != autocorrectLearningRecentCorrection) {
+                    // Finish the prior unchanged review, then follow the correction the user
+                    // actually tapped. Both remain bounded to this exact editor connection.
+                    clearAutocorrectLearningSession();
+                    beginTappedAutocorrectionLearning(
+                            tappedCorrection,
+                            current,
+                            connection
+                    );
+                } else if (tappedCorrection == autocorrectLearningRecentCorrection) {
+                    showAutocorrectSuggestion(tappedCorrection);
+                }
+                return;
+            }
+        }
+        if (tappedCorrection != null) {
+            beginTappedAutocorrectionLearning(tappedCorrection, current, connection);
+        }
+    }
+
+    private void beginTappedAutocorrectionLearning(
+            RecentAutocorrection recent,
+            ExtractedText current,
+            InputConnection connection
+    ) {
+        beginAutocorrectLearningSession(
+                recent.feedback(),
+                recent.start(),
+                recent.end(),
+                current,
+                connection,
+                true,
+                false,
+                recent
+        );
+        if (autocorrectLearningSession != null) {
+            showAutocorrectSuggestion(recent);
+        }
+    }
+
+    private void showAutocorrectSuggestion(RecentAutocorrection recent) {
+        if (recent == null || keyboardPanel == null) {
+            return;
+        }
+        showingAutocorrectNotice = false;
+        showingAutocorrectSuggestion = true;
+        keyboardPanel.showAutocorrectSuggestion(recent.feedback().written);
+    }
+
+    private void hideAutocorrectSuggestion() {
+        if (!showingAutocorrectSuggestion) {
+            return;
+        }
+        showingAutocorrectSuggestion = false;
+        if (keyboardPanel != null) {
+            keyboardPanel.hideAutocorrectSuggestion();
+        }
+    }
+
+    private void dismissAutocorrectSuggestionForLearning() {
+        if (!showingAutocorrectSuggestion || autocorrectLearningSession == null) {
+            hideAutocorrectSuggestion();
+            return;
+        }
+        hideAutocorrectSuggestion();
+        // Explicit × is the same rejection signal as showing the candidate and tapping away.
+        observeAutocorrectLearning(true, false);
+    }
+
+    private void useAutocorrectOriginalSuggestion() {
+        RecentAutocorrection recent = autocorrectLearningRecentCorrection;
+        InputConnection connection = getCurrentInputConnection();
+        hideAutocorrectSuggestion();
+        clearAutocorrectLearningSession();
+        if (recent == null || connection == null) {
+            return;
+        }
+        AutocorrectApplier.Result result = AutocorrectApplier.useOriginalSuggestion(
+                connection,
+                recent
+        );
+        if (!result.textApplied()) {
+            return;
+        }
+        if (autocorrectLearningStore != null && AutocorrectSettings.isLearningEnabled(this)) {
+            autocorrectLearningStore.recordRejection(recent.feedback());
+        }
+        if (autocorrectUndoRecent == recent) {
+            clearAutocorrectUndo();
+        }
+        removeRecentAutocorrection(recent);
+        showingAutocorrectNotice = true;
+        if (keyboardPanel != null) {
+            keyboardPanel.showProofreadMessage(
+                    getString(R.string.autocorrect_original_restored),
+                    true
+            );
+        }
     }
 
     private void startProofread() {
         if (proofreadSessionId != 0) {
             return;
         }
+        clearAutocorrectLearningSession();
+        clearRecentAutocorrections();
         cancelAutocorrectRequest();
-        autocorrectUndo = null;
+        clearAutocorrectUndo();
         hideAutocorrectNotice();
         if (!EditorBehavior.supportsProofreading(editorInfo)) {
             showProofreadMessage(getString(R.string.proofread_secure_field));
@@ -561,9 +1430,45 @@ public final class TapziqInputMethodService extends InputMethodService {
     @Override
     public void onStartInput(EditorInfo attribute, boolean restarting) {
         super.onStartInput(attribute, restarting);
+        clearAutocorrectLearningSession();
+        if (!restarting || !recentAutocorrectionContextMatches(
+                attribute,
+                getCurrentInputConnection()
+        )) {
+            clearRecentAutocorrections();
+        }
         cancelAutocorrectRequest();
-        autocorrectUndo = null;
+        clearAutocorrectUndo();
         editorInfo = attribute;
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    public void onViewClicked(boolean focusChanged) {
+        super.onViewClicked(focusChanged);
+        Handler handler = proofreadTimeoutHandler;
+        if (handler == null) {
+            return;
+        }
+        pendingEditorTap = true;
+        handler.removeCallbacks(editorTapSettled);
+        // Android can notify the IME just before it publishes the editor's new selection.
+        // Read the settled snapshot after a short delay, and only for this genuine view click.
+        handler.postDelayed(editorTapSettled, EDITOR_TAP_SETTLE_MS);
+    }
+
+    private void settlePendingEditorTapForLearning() {
+        if (!pendingEditorTap) {
+            return;
+        }
+        pendingEditorTap = false;
+        Handler handler = proofreadTimeoutHandler;
+        if (handler != null) {
+            handler.removeCallbacks(editorTapSettled);
+        }
+        if (isInputViewShown()) {
+            handleUserEditorTapForLearning();
+        }
     }
 
     private void consumeProofreadResult() {
@@ -805,13 +1710,18 @@ public final class TapziqInputMethodService extends InputMethodService {
     public void onDestroy() {
         ProofreadSession.setListener(null);
         AutocorrectSettings.unregisterListener(this, autocorrectSettingsListener);
+        if (autocorrectLearningStore != null) {
+            autocorrectLearningStore.unregisterClearListener(learningMemoryListener);
+        }
+        clearAutocorrectLearningSession();
+        clearRecentAutocorrections();
         cancelAutocorrectRequest();
         closeAutocorrectProofreader();
         if (autocorrectModelStore != null) {
             autocorrectModelStore.close();
             autocorrectModelStore = null;
         }
-        autocorrectUndo = null;
+        clearAutocorrectUndo();
         clearProofreadState();
         ProofreadSession.clear();
         cancelProofreadExpiry();

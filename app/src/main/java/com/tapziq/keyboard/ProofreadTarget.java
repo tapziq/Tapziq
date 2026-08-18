@@ -145,19 +145,24 @@ final class ProofreadTarget {
     }
 
     boolean matches(android.view.inputmethod.ExtractedText extracted) {
-        if (extracted == null
-                || extracted.text == null
-                || extracted.startOffset != 0
-                || extracted.partialStartOffset >= 0
-                || extracted.text.length() > MAX_SNAPSHOT_CHARACTERS
-                || !Arrays.equals(documentDigest, digest(extracted.text.toString()))) {
+        if (!matchesDocument(extracted)) {
             return false;
         }
         int currentSelectionStart = extracted.startOffset
                 + Math.min(extracted.selectionStart, extracted.selectionEnd);
         int currentSelectionEnd = extracted.startOffset
                 + Math.max(extracted.selectionStart, extracted.selectionEnd);
-        if (currentSelectionStart != selectionStart || currentSelectionEnd != selectionEnd) {
+        return currentSelectionStart == selectionStart && currentSelectionEnd == selectionEnd;
+    }
+
+    /** Same immutable source document, regardless of where the user moved the selection. */
+    boolean matchesDocument(android.view.inputmethod.ExtractedText extracted) {
+        if (extracted == null
+                || extracted.text == null
+                || extracted.startOffset != 0
+                || extracted.partialStartOffset >= 0
+                || extracted.text.length() > MAX_SNAPSHOT_CHARACTERS
+                || !Arrays.equals(documentDigest, digest(extracted.text.toString()))) {
             return false;
         }
         CharSequence extractedText = extracted.text;

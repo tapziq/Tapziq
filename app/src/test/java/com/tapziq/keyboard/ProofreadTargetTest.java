@@ -88,7 +88,9 @@ public final class ProofreadTargetTest {
 
         assertTrue(target.matches(extracted("bad bad", 0, 4, 7, -1)));
         assertTrue(!target.matches(extracted("bad bad", 0, 0, 3, -1)));
+        assertTrue(target.matchesDocument(extracted("bad bad", 0, 0, 3, -1)));
         assertTrue(!target.matches(extracted("bad bad bad", 0, 4, 7, -1)));
+        assertTrue(!target.matchesDocument(extracted("bad bad bad", 0, 4, 7, -1)));
     }
 
     @Test
