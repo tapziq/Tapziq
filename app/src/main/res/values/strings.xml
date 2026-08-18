@@ -36,9 +36,24 @@
     <string name="autocorrect_body">Off by default. When enabled, Tapziq sends recently completed text only to the local Gemma model after you pause. A correction is applied only if the field and cursor are still exactly unchanged. Model loading can take time; Backspace immediately after a correction restores the original text.</string>
     <string name="autocorrect_switch">Use local Gemma 4 autocorrect</string>
     <string name="autocorrect_applied">Gemma autocorrected the completed text. Press Backspace now to undo.</string>
+    <string name="autocorrect_applied_review">Gemma autocorrected the completed text. Press Backspace now to undo. In compatible editors, tap the corrected word to review the original.</string>
+    <string name="autocorrect_original_candidate">Original: %1$s</string>
+    <string name="autocorrect_original_restored">The original word was restored and the Gemma correction was remembered as rejected.</string>
     <string name="autocorrect_reverted">The last Gemma autocorrection was undone.</string>
+    <string name="autocorrect_reverted_learned">The autocorrection was undone and its rejected word was remembered locally.</string>
+    <string name="autocorrect_learning_body">Optional and off by default. When enabled, dismissing a one-word Gemma review or undoing an autocorrection remembers only the exact written and rejected words. In a compatible editor, tapping a recent corrected word shows Tapziq’s original-word candidate; using it reverses and rejects the correction, while dismissing it or tapping away records the rejection. If you replace that same word with Tapziq, it learns the replacement when you type a boundary or move away. Recent tap matching can start a review for up to two minutes in the current editor; once opened, that review and replacement tracking expire after 30 seconds without related activity. No sentence, app name, or typing history is saved.</string>
+    <string name="autocorrect_learning_switch">Learn from rejected Gemma corrections</string>
+    <string name="autocorrect_learning_none">No learned word corrections are stored.</string>
+    <plurals name="autocorrect_learning_count">
+        <item quantity="one">%1$d learned word correction stored only in Tapziq.</item>
+        <item quantity="other">%1$d learned word corrections stored only in Tapziq.</item>
+    </plurals>
+    <string name="autocorrect_learning_clear">Clear learned corrections</string>
+    <string name="autocorrect_learning_clear_title">Clear learned corrections?</string>
+    <string name="autocorrect_learning_clear_confirm">This deletes Tapziq’s app-private word correction memory. The Gemma model and autocorrect setting will not change.</string>
+    <string name="autocorrect_learning_clear_failed">Tapziq could not durably clear the learned corrections. Try again.</string>
     <string name="privacy_title">Private by design</string>
-    <string name="privacy_body">Typed text stays on your device. When you request proofreading, or when you explicitly enable Gemma autocorrect, Tapziq briefly reads up to 2,000 characters of the active field in memory so it can verify that the field and cursor remain unchanged; only the requested or recently completed passage (up to 500 characters) is processed by the app-private Gemma 4 model. Tapziq does not save that text, read the clipboard, show ads, run analytics, or send editor text over the network. Network access is used only for the explicit model download.</string>
+    <string name="privacy_body">Typed text stays on your device. When you request proofreading, or when you explicitly enable Gemma autocorrect, Tapziq briefly reads up to 2,000 characters of the active field in memory so it can verify that the field and cursor remain unchanged; only the requested or recently completed passage (up to 500 characters) is processed by the app-private Gemma 4 model. Tapziq does not save passages or general typing history, read the clipboard, show ads, run analytics, or send editor text over the network. If you separately enable correction learning, Tapziq can save up to 100 exact word-level preferences in app-private, no-backup storage; you can clear them here. Network access is used only for the explicit model download.</string>
     <string name="system_warning_note">Android shows a standard warning when any downloaded keyboard is enabled. Tapziq cannot enable or select itself; those choices stay under your control.</string>
     <string name="proofread_activity_title">Proofreading on your device</string>
     <string name="proofread_checking">Preparing the local Gemma 4 model…</string>

@@ -23,6 +23,7 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.io.File;
 import java.io.IOException;
@@ -36,6 +37,9 @@ public final class MainActivity extends Activity {
     private Button modelActionButton;
     private Button modelRemoveButton;
     private GemmaModelStore modelStore;
+    private TextView learningStatusView;
+    private Button clearLearningButton;
+    private AutocorrectLearningStore learningStore;
     private boolean modelOperationActive;
 
     @Override
@@ -43,6 +47,7 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         Handler mainHandler = new Handler(Looper.getMainLooper());
         modelStore = new GemmaModelStore(this, mainHandler::post);
+        learningStore = new AutocorrectLearningStore(this);
 
         ScrollView scrollView = new ScrollView(this);
         scrollView.setFillViewport(true);
@@ -194,8 +199,45 @@ public final class MainActivity extends Activity {
                 AutocorrectSettings.setEnabled(this, enabled));
         LinearLayout.LayoutParams autocorrectParams = matchParams();
         autocorrectParams.topMargin = dp(9);
-        autocorrectParams.bottomMargin = dp(22);
+        autocorrectParams.bottomMargin = dp(12);
         content.addView(autocorrectSwitch, autocorrectParams);
+
+        TextView learningBody = text(
+                getString(R.string.autocorrect_learning_body),
+                14,
+                R.color.secondary_text,
+                Typeface.NORMAL
+        );
+        content.addView(learningBody, wrapParams());
+
+        @SuppressWarnings("deprecation")
+        Switch learningSwitch = new Switch(this);
+        learningSwitch.setText(R.string.autocorrect_learning_switch);
+        learningSwitch.setTextColor(getColor(R.color.primary_text));
+        learningSwitch.setTextSize(16f);
+        learningSwitch.setChecked(AutocorrectSettings.isLearningEnabled(this));
+        learningSwitch.setOnCheckedChangeListener((button, enabled) -> {
+            AutocorrectSettings.setLearningEnabled(this, enabled);
+            updateLearningStatus();
+        });
+        LinearLayout.LayoutParams learningSwitchParams = matchParams();
+        learningSwitchParams.topMargin = dp(9);
+        content.addView(learningSwitch, learningSwitchParams);
+
+        learningStatusView = text("", 14, R.color.secondary_text, Typeface.NORMAL);
+        LinearLayout.LayoutParams learningStatusParams = matchParams();
+        learningStatusParams.topMargin = dp(6);
+        content.addView(learningStatusView, learningStatusParams);
+
+        clearLearningButton = secondaryButton(
+                getString(R.string.autocorrect_learning_clear)
+        );
+        clearLearningButton.setOnClickListener(view -> confirmClearLearning());
+        LinearLayout.LayoutParams clearLearningParams = buttonParams();
+        clearLearningParams.topMargin = dp(8);
+        clearLearningParams.bottomMargin = dp(22);
+        content.addView(clearLearningButton, clearLearningParams);
+        updateLearningStatus();
 
         content.addView(sectionTitle(getString(R.string.privacy_title)));
         TextView privacy = text(
@@ -228,6 +270,7 @@ public final class MainActivity extends Activity {
         if (!modelOperationActive) {
             updateModelStatus();
         }
+        updateLearningStatus();
     }
 
     @Override
@@ -236,7 +279,48 @@ public final class MainActivity extends Activity {
             modelStore.close();
             modelStore = null;
         }
+        learningStore = null;
         super.onDestroy();
+    }
+
+    private void updateLearningStatus() {
+        if (learningStore == null || learningStatusView == null || clearLearningButton == null) {
+            return;
+        }
+        int count = learningStore.size();
+        boolean hasStoredData = learningStore.hasStoredData();
+        learningStatusView.setText(learningStore.needsClearRetry()
+                ? getString(R.string.autocorrect_learning_clear_failed)
+                : count == 0
+                ? getString(R.string.autocorrect_learning_none)
+                : getResources().getQuantityString(
+                        R.plurals.autocorrect_learning_count,
+                        count,
+                        count
+                ));
+        clearLearningButton.setEnabled(hasStoredData);
+    }
+
+    private void confirmClearLearning() {
+        if (learningStore == null || !learningStore.hasStoredData()) {
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.autocorrect_learning_clear_title)
+                .setMessage(R.string.autocorrect_learning_clear_confirm)
+                .setPositiveButton(R.string.autocorrect_learning_clear, (dialog, which) -> {
+                    boolean cleared = learningStore.clear();
+                    updateLearningStatus();
+                    if (!cleared) {
+                        Toast.makeText(
+                                this,
+                                R.string.autocorrect_learning_clear_failed,
+                                Toast.LENGTH_LONG
+                        ).show();
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
     }
 
     private void updateStatus() {

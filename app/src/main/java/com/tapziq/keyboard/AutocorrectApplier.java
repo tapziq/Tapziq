@@ -10,9 +10,26 @@ import android.view.inputmethod.InputConnection;
 /** Applies and undoes a validated autocorrection while preserving its trailing boundary. */
 final class AutocorrectApplier {
     enum Result {
-        APPLIED,
-        STALE,
-        FAILED
+        APPLIED(true, true),
+        APPLIED_WITHOUT_CORRECTION_METADATA(true, false),
+        STALE(false, false),
+        FAILED(false, false);
+
+        private final boolean textApplied;
+        private final boolean correctionMetadataAccepted;
+
+        Result(boolean textApplied, boolean correctionMetadataAccepted) {
+            this.textApplied = textApplied;
+            this.correctionMetadataAccepted = correctionMetadataAccepted;
+        }
+
+        boolean textApplied() {
+            return textApplied;
+        }
+
+        boolean correctionMetadataAccepted() {
+            return correctionMetadataAccepted;
+        }
     }
 
     private AutocorrectApplier() {
@@ -24,6 +41,53 @@ final class AutocorrectApplier {
 
     static Result undo(InputConnection connection, AutocorrectEdit edit) {
         return undo(connection, edit, Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE);
+    }
+
+    /** Safely applies the Tapziq-owned original-word candidate for a retained correction. */
+    static Result useOriginalSuggestion(
+            InputConnection connection,
+            RecentAutocorrection recent
+    ) {
+        if (connection == null || recent == null) {
+            return Result.STALE;
+        }
+        ExtractedText current = connection.getExtractedText(extractedTextRequest(), 0);
+        if (current == null
+                || current.text == null
+                || current.startOffset != 0
+                || current.partialStartOffset >= 0
+                || !recent.matchesDocument(current.text, current.startOffset, true)) {
+            return Result.STALE;
+        }
+        String expectedDocument = current.text.toString();
+        String original = recent.feedback().written;
+        String corrected = recent.feedback().rejected;
+        Result result = replace(
+                connection,
+                recent.start(),
+                recent.end(),
+                corrected,
+                original,
+                1,
+                current.selectionStart,
+                current.selectionEnd,
+                expectedDocument,
+                false
+        );
+        if (result != Result.APPLIED) {
+            return result;
+        }
+        String resultingDocument = expectedDocument.substring(0, recent.start())
+                + original
+                + expectedDocument.substring(recent.end());
+        int resultingCaret = recent.start() + original.length();
+        ExtractedText applied = connection.getExtractedText(extractedTextRequest(), 0);
+        if (!matchesCompleteState(applied, resultingDocument, resultingCaret)) {
+            return Result.FAILED;
+        }
+        return notifyCorrection(connection, recent.start(), corrected, original)
+                ? Result.APPLIED
+                : Result.APPLIED_WITHOUT_CORRECTION_METADATA;
     }
 
     static Result apply(InputConnection connection, AutocorrectEdit edit, boolean useReplaceText) {
@@ -40,6 +104,7 @@ final class AutocorrectApplier {
                 edit.suggestion(),
                 edit.replacementCursorPosition(),
                 originalCaret,
+                originalCaret,
                 edit.sourceDocument(),
                 useReplaceText
         );
@@ -49,8 +114,9 @@ final class AutocorrectApplier {
         if (!edit.matchesApplied(connection.getExtractedText(extractedTextRequest(), 0))) {
             return Result.FAILED;
         }
-        notifyCorrection(connection, edit.start(), edit.original(), edit.suggestion());
-        return Result.APPLIED;
+        return notifyCorrection(connection, edit.start(), edit.original(), edit.suggestion())
+                ? Result.APPLIED
+                : Result.APPLIED_WITHOUT_CORRECTION_METADATA;
     }
 
     static Result undo(InputConnection connection, AutocorrectEdit edit, boolean useReplaceText) {
@@ -66,6 +132,7 @@ final class AutocorrectApplier {
                 edit.original(),
                 edit.undoCursorPosition(),
                 edit.caretAfter(),
+                edit.caretAfter(),
                 edit.resultingDocument(),
                 useReplaceText
         );
@@ -75,8 +142,9 @@ final class AutocorrectApplier {
         if (!edit.matches(connection.getExtractedText(extractedTextRequest(), 0))) {
             return Result.FAILED;
         }
-        notifyCorrection(connection, edit.start(), edit.suggestion(), edit.original());
-        return Result.APPLIED;
+        return notifyCorrection(connection, edit.start(), edit.suggestion(), edit.original())
+                ? Result.APPLIED
+                : Result.APPLIED_WITHOUT_CORRECTION_METADATA;
     }
 
     private static Result replace(
@@ -86,7 +154,8 @@ final class AutocorrectApplier {
             String expected,
             String replacement,
             int cursorPosition,
-            int restoreCaret,
+            int restoreSelectionStart,
+            int restoreSelectionEnd,
             String expectedDocument,
             boolean useReplaceText
     ) {
@@ -103,7 +172,7 @@ final class AutocorrectApplier {
                 );
             } else {
                 if (!connection.setSelection(start, end)) {
-                    restoreSelection(connection, restoreCaret);
+                    restoreSelection(connection, restoreSelectionStart, restoreSelectionEnd);
                     return Result.STALE;
                 }
                 ExtractedText selectedState = connection.getExtractedText(
@@ -111,20 +180,20 @@ final class AutocorrectApplier {
                         0
                 );
                 if (!matchesSelectionState(selectedState, expectedDocument, start, end)) {
-                    restoreSelection(connection, restoreCaret);
+                    restoreSelection(connection, restoreSelectionStart, restoreSelectionEnd);
                     return Result.STALE;
                 }
                 if (!expected.isEmpty()) {
                     CharSequence selected = connection.getSelectedText(0);
                     if (selected == null || !expected.contentEquals(selected)) {
-                        restoreSelection(connection, restoreCaret);
+                        restoreSelection(connection, restoreSelectionStart, restoreSelectionEnd);
                         return Result.STALE;
                     }
                 }
                 replaced = connection.commitText(replacement, cursorPosition);
             }
             if (!replaced) {
-                restoreSelection(connection, restoreCaret);
+                restoreSelection(connection, restoreSelectionStart, restoreSelectionEnd);
                 return Result.FAILED;
             }
             return Result.APPLIED;
@@ -133,8 +202,8 @@ final class AutocorrectApplier {
         }
     }
 
-    private static void restoreSelection(InputConnection connection, int caret) {
-        connection.setSelection(caret, caret);
+    private static void restoreSelection(InputConnection connection, int start, int end) {
+        connection.setSelection(start, end);
     }
 
     private static boolean matchesSelectionState(
@@ -153,14 +222,29 @@ final class AutocorrectApplier {
                 && extracted.selectionEnd == end;
     }
 
-    private static void notifyCorrection(
+    private static boolean matchesCompleteState(
+            ExtractedText extracted,
+            String expectedDocument,
+            int expectedCaret
+    ) {
+        return extracted != null
+                && extracted.text != null
+                && extracted.startOffset == 0
+                && extracted.partialStartOffset < 0
+                && !AutocorrectTarget.hasNonEphemeralSpans(extracted.text)
+                && expectedDocument.contentEquals(extracted.text)
+                && extracted.selectionStart == expectedCaret
+                && extracted.selectionEnd == expectedCaret;
+    }
+
+    private static boolean notifyCorrection(
             InputConnection connection,
             int start,
             String oldText,
             String newText
     ) {
         // This only notifies correction-aware editors after the exact post-state was observed.
-        connection.commitCorrection(new CorrectionInfo(start, oldText, newText));
+        return connection.commitCorrection(new CorrectionInfo(start, oldText, newText));
     }
 
     private static ExtractedTextRequest extractedTextRequest() {

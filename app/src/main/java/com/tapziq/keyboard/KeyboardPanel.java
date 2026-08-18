@@ -30,6 +30,10 @@ final class KeyboardPanel extends LinearLayout {
         void onApplyProofread();
 
         void onDismissProofread();
+
+        void onUseAutocorrectOriginal();
+
+        void onDismissAutocorrectSuggestion();
     }
 
     private final Listener listener;
@@ -39,6 +43,7 @@ final class KeyboardPanel extends LinearLayout {
     private Button dismissButton;
     private String visibleProofreadText;
     private boolean visibleSuggestion;
+    private boolean visibleAutocorrectSuggestion;
     private boolean visibleDismiss;
 
     KeyboardPanel(Context context, Listener listener) {
@@ -57,6 +62,7 @@ final class KeyboardPanel extends LinearLayout {
     void showSuggestion(String suggestion) {
         visibleProofreadText = suggestion;
         visibleSuggestion = true;
+        visibleAutocorrectSuggestion = false;
         visibleDismiss = true;
         if (suggestionBar == null || suggestionText == null
                 || applyButton == null || dismissButton == null) {
@@ -68,6 +74,7 @@ final class KeyboardPanel extends LinearLayout {
     void showProofreadMessage(String message, boolean showDismiss) {
         visibleProofreadText = message;
         visibleSuggestion = false;
+        visibleAutocorrectSuggestion = false;
         visibleDismiss = showDismiss;
         if (suggestionBar == null || suggestionText == null
                 || applyButton == null || dismissButton == null) {
@@ -76,9 +83,29 @@ final class KeyboardPanel extends LinearLayout {
         restoreProofreadBar();
     }
 
+    void showAutocorrectSuggestion(String original) {
+        visibleProofreadText = original;
+        visibleSuggestion = false;
+        visibleAutocorrectSuggestion = true;
+        visibleDismiss = true;
+        if (suggestionBar == null || suggestionText == null
+                || applyButton == null || dismissButton == null) {
+            return;
+        }
+        restoreProofreadBar();
+    }
+
+    void hideAutocorrectSuggestion() {
+        if (!visibleAutocorrectSuggestion) {
+            return;
+        }
+        hideProofreadMessage();
+    }
+
     void hideProofreadMessage() {
         visibleProofreadText = null;
         visibleSuggestion = false;
+        visibleAutocorrectSuggestion = false;
         visibleDismiss = false;
         if (suggestionBar != null) {
             setProofreadBarVisible(false);
@@ -206,11 +233,23 @@ final class KeyboardPanel extends LinearLayout {
         bar.addView(scroller, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1f));
 
         applyButton = compactButton("Apply", "Apply proofreading suggestion");
-        setHapticClickListener(applyButton, listener::onApplyProofread);
+        setHapticClickListener(applyButton, () -> {
+            if (visibleAutocorrectSuggestion) {
+                listener.onUseAutocorrectOriginal();
+            } else {
+                listener.onApplyProofread();
+            }
+        });
         bar.addView(applyButton, new LayoutParams(dp(72), LayoutParams.MATCH_PARENT));
 
         dismissButton = compactButton("×", "Dismiss proofreading suggestion");
-        setHapticClickListener(dismissButton, listener::onDismissProofread);
+        setHapticClickListener(dismissButton, () -> {
+            if (visibleAutocorrectSuggestion) {
+                listener.onDismissAutocorrectSuggestion();
+            } else {
+                listener.onDismissProofread();
+            }
+        });
         LinearLayout.LayoutParams dismissParams = new LayoutParams(dp(46), LayoutParams.MATCH_PARENT);
         dismissParams.leftMargin = dp(4);
         bar.addView(dismissButton, dismissParams);
@@ -232,6 +271,11 @@ final class KeyboardPanel extends LinearLayout {
         setProofreadBarVisible(true);
         String previewText = visibleSuggestion
                 ? ProofreadPreview.visibleText(visibleProofreadText)
+                : visibleAutocorrectSuggestion
+                        ? getContext().getString(
+                                R.string.autocorrect_original_candidate,
+                                visibleProofreadText
+                        )
                 : visibleProofreadText;
         suggestionText.setText(previewText);
         suggestionText.setTextColor(getContext().getColor(R.color.key_text));
@@ -239,10 +283,20 @@ final class KeyboardPanel extends LinearLayout {
                 visibleSuggestion
                         ? "Proofreading suggestion. Line breaks are shown as return arrows and "
                                 + "tabs as tab arrows: " + previewText
+                        : visibleAutocorrectSuggestion
+                                ? "Original word suggestion: " + visibleProofreadText
                         : visibleProofreadText
         );
-        applyButton.setVisibility(visibleSuggestion ? VISIBLE : GONE);
-        applyButton.setEnabled(visibleSuggestion);
+        boolean showApply = visibleSuggestion || visibleAutocorrectSuggestion;
+        applyButton.setText(visibleAutocorrectSuggestion ? "Use" : "Apply");
+        applyButton.setContentDescription(visibleAutocorrectSuggestion
+                ? "Use original word " + visibleProofreadText
+                : "Apply proofreading suggestion");
+        applyButton.setVisibility(showApply ? VISIBLE : GONE);
+        applyButton.setEnabled(showApply);
+        dismissButton.setContentDescription(visibleAutocorrectSuggestion
+                ? "Dismiss original word suggestion"
+                : "Dismiss proofreading suggestion");
         dismissButton.setVisibility(visibleDismiss ? VISIBLE : GONE);
     }
 

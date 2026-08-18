@@ -14,10 +14,12 @@ a PWA to become Android's system-wide keyboard or read another app's text field.
 
 Ordinary key presses go straight to Android's active text field. Gemma reads
 editor text only for user-requested proofreading or after the user explicitly
-enables Gemma autocorrect. Tapziq has no ads, clipboard access, typing history,
-or Tapziq-owned analytics. Editor text processed by Tapziq's app-private model
-is not saved or sent over the network. Tapziq uses network access only when the
-user explicitly downloads the model. See the full [privacy notice](PRIVACY.md).
+enables Gemma autocorrect. Tapziq has no ads, clipboard access, general typing
+history, or Tapziq-owned analytics. Editor passages processed by Tapziq's
+app-private model are not saved or sent over the network. An optional, separate
+learning switch can save only bounded word-level correction preferences; those
+stay app-private and can be cleared at any time. Tapziq uses network access only
+when the user explicitly downloads the model. See the full [privacy notice](PRIVACY.md).
 
 ## Proofread with Gemma 4
 
@@ -63,6 +65,33 @@ field limits and its secure-field exclusions. Model loading and generation can
 take noticeably longer than dictionary-based autocorrect, especially on its
 first use after the keyboard opens. Tapziq reuses the initialized engine for
 later checks while that keyboard view remains visible, then releases it.
+
+### Learn from rejected corrections
+
+**Learn from rejected Gemma corrections** is a separate setting and is off by
+default. When enabled, dismissing a reviewed one-word Gemma change, typing over
+that review, or immediately undoing an automatic correction records the exact
+written/rejected word pair. In a compatible editor that reports view taps to
+Android IMEs, tapping a recent autocorrected word shows Tapziq's original-word
+candidate above the keyboard. Using that candidate explicitly reverses and
+rejects the Gemma correction; dismissing it or tapping away without using it also
+records the rejection. If the user edits that same word with Tapziq, Tapziq
+learns the final replacement when the user types a word boundary or moves the
+selection away. To recognize a later tap after typing has continued, Tapziq keeps
+hashed context for at most eight recent one-word autocorrections in memory and
+allows each to start a review for up to two minutes while that editor remains
+active. Once opened, the anchored review and same-word replacement session expires
+after 30 seconds without related typing or taps. Unrelated typing is never
+associated with the rejected result.
+
+Tapziq uses matching entries as local Gemma prompt preferences and also blocks
+an exact correction that was previously rejected. This is bounded local
+preference memory, not runtime fine-tuning of the Gemma model weights. The app
+retains at most 100 exact-case word records—never the surrounding sentence,
+app/package name, or a general typing log—in app-private storage excluded from
+backup and device transfer. Learning remains disabled in secure, no-suggestions, and
+`IME_FLAG_NO_PERSONALIZED_LEARNING` fields. The setup screen shows the number of
+stored entries and provides **Clear learned corrections**.
 
 ## Browser-owned edition
 

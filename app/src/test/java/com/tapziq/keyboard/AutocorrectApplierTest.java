@@ -90,6 +90,53 @@ public final class AutocorrectApplierTest {
     }
 
     @Test
+    public void appliedTextReportsWhenEditorRejectsCorrectionMetadata() {
+        RecordingConnection connection = new RecordingConnection("teh ", 4);
+        connection.acceptCorrectionMetadata = false;
+        AutocorrectEdit edit = edit("teh ", " ", "the");
+
+        assertEquals(
+                AutocorrectApplier.Result.APPLIED_WITHOUT_CORRECTION_METADATA,
+                AutocorrectApplier.apply(connection, edit, true)
+        );
+        assertEquals("the ", connection.text);
+        assertEquals(1, connection.correctionCount);
+    }
+
+    @Test
+    public void tapziqOwnedOriginalCandidateRestoresOnlyTheAnchoredWord() {
+        AutocorrectEdit edit = edit("Prefix teh ", " ", "Prefix the");
+        RecentAutocorrection recent = RecentAutocorrection.from(edit);
+        RecordingConnection connection = new RecordingConnection("Prefix the more", 15);
+
+        assertEquals(
+                AutocorrectApplier.Result.APPLIED,
+                AutocorrectApplier.useOriginalSuggestion(connection, recent)
+        );
+        assertEquals("Prefix teh more", connection.text);
+        assertEquals(10, connection.selectionStart);
+        assertEquals(1, connection.correctionCount);
+    }
+
+    @Test
+    public void failedOriginalCandidateRestoresTheExactPriorSelection() {
+        AutocorrectEdit edit = edit("Prefix teh ", " ", "Prefix the");
+        RecentAutocorrection recent = RecentAutocorrection.from(edit);
+        RecordingConnection connection = new RecordingConnection("Prefix the more", 15);
+        connection.selectionStart = 15;
+        connection.selectionEnd = 11;
+        connection.styleSnapshotsAfterSelection = true;
+
+        assertEquals(
+                AutocorrectApplier.Result.STALE,
+                AutocorrectApplier.useOriginalSuggestion(connection, recent)
+        );
+        assertEquals("Prefix the more", connection.text);
+        assertEquals(15, connection.selectionStart);
+        assertEquals(11, connection.selectionEnd);
+    }
+
+    @Test
     public void legacyInsertionsAndDeletionUndosAcceptNullForCollapsedSelections() {
         RecordingConnection connection = new RecordingConnection("cant ", 5);
         AutocorrectEdit edit = edit("cant ", " ", "can't");
@@ -173,6 +220,7 @@ public final class AutocorrectApplierTest {
         private boolean ignoreSelection;
         private boolean styleSnapshotsAfterSelection;
         private boolean selectionWasSet;
+        private boolean acceptCorrectionMetadata = true;
 
         RecordingConnection(String text, int caret) {
             this.text = text;
@@ -236,7 +284,7 @@ public final class AutocorrectApplierTest {
         public boolean commitCorrection(CorrectionInfo correctionInfo) {
             lastCorrection = correctionInfo;
             correctionCount++;
-            return true;
+            return acceptCorrectionMetadata;
         }
 
         @Override
