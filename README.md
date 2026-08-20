@@ -4,9 +4,9 @@
 Tapziq is an Android keyboard with a QWERTY layout, one-shot shift, numbers,
 symbols, context-aware enter actions, Android's keyboard switch key, and
 user-initiated proofreading plus optional autocorrect powered on-device by
-Gemma 4 E2B-it. It can also send an explicitly highlighted passage to David
-Ventura's separately installed Offline Translator app and safely return the
-chosen translation to the original field.
+Gemma 4 E2B-it. It can also send an explicitly highlighted passage to the
+separately installed Tapziq Translate app and safely return the chosen
+English-Spanish translation to the original field.
 
 The repository also contains a separate [browser-only edition](web/README.md).
 It stores the web-specific Gemma model in origin-private browser storage and
@@ -23,18 +23,21 @@ learning switch can save only bounded word-level correction preferences; those
 stay app-private and can be cleared at any time. Tapziq uses network access only
 when the user explicitly downloads the model. See the full [privacy notice](PRIVACY.md).
 
-## Translate selected text with Offline Translator
+## Translate selected text with Tapziq Translate
 
-Install [Offline Translator](https://github.com/DavidVentura/offline-translator)
-from its [F-Droid listing](https://f-droid.org/packages/dev.davidv.translator/),
-open it, and download the language packs you want. Translation models and
-language choices are owned by that companion app; Tapziq does not bundle its
-GPL code, APK, native engine, or model files.
+Install [Tapziq Translate](https://github.com/tapziq/tapziq-translator) from its
+[latest GitHub release](https://github.com/tapziq/tapziq-translator/releases/latest).
+This integration requires Tapziq Translate v0.3.0 or newer.
+It is a deliberately tiny offline English-Spanish translator: a handwritten
+dictionary is bundled directly in the separate app, so it downloads no language
+packs, uses no model or translation API, and makes no network requests. Unknown
+vocabulary stays unchanged. Tapziq Keyboard does not bundle the companion app,
+its code, or its dictionary.
 
 In a compatible text field, highlight the exact passage to translate and tap
-**Translate** above Tapziq's letter keys. Offline Translator opens its local
-source/target picker and translates with the installed packs. Tap its checkmark
-to return the result. Tapziq then returns to the source editor and displays a
+**Translate** above Tapziq's letter keys. Tapziq Translate opens with that
+passage; choose English to Spanish or Spanish to English, translate it, and
+return the result. Tapziq then returns to the source editor and displays a
 translation preview above the keyboard; the field does not change until you tap
 **Apply**.
 
@@ -163,8 +166,8 @@ Tapziq requires a 64-bit device running Android 8.0 or newer.
    Tapziq and keep the screen open until the download and checksum verification
    finish. You can explicitly pause and later resume the transfer. Wi-Fi and at
    least 3 GB of free space are recommended.
-6. To use translation, install Offline Translator from Tapziq's setup screen,
-   open it, and download the source/target language packs you need.
+6. To use translation, install or update Tapziq Translate from Tapziq's setup
+   screen. Its tiny English-Spanish dictionary is already bundled in that app.
 7. Optional: turn on **Use local Gemma 4 autocorrect**. It remains off unless
    you explicitly enable it.
 8. Tap the test field and type.

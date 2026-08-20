@@ -13,7 +13,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
-/** Foreground bridge that asks the separately installed Offline Translator app for a result. */
+/** Foreground bridge that asks the separately installed Tapziq Translate app for a result. */
 public final class TranslateBridgeActivity extends Activity {
     static final String EXTRA_SESSION_ID = "com.tapziq.keyboard.TRANSLATION_SESSION_ID";
     private static final String STATE_LAUNCHED = "translator_launched";
@@ -118,7 +118,7 @@ public final class TranslateBridgeActivity extends Activity {
 
     private void launchTranslator() {
         launched = true;
-        Intent intent = OfflineTranslatorContract.processText(pending.text);
+        Intent intent = TapziqTranslatorContract.processText(pending.text);
         if (intent.resolveActivity(getPackageManager()) == null) {
             completeWithMessage(getString(R.string.translation_app_missing));
             return;

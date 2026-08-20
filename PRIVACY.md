@@ -1,6 +1,6 @@
 # Tapziq Privacy Notice
 
-Last updated: August 17, 2026
+Last updated: August 20, 2026
 
 This notice covers Tapziq's installed Android system keyboard. The separate PWA
 is governed by the [Tapziq browser privacy notice](web/PRIVACY.md); its virtual
@@ -10,7 +10,7 @@ system keyboard.
 Tapziq is an Android keyboard with optional, user-initiated proofreading and a
 separate, explicitly enabled autocorrect feature powered by an app-private
 Gemma 4 E2B-it model through the LiteRT-LM runtime. Selected-text translation
-uses David Ventura's separately installed Offline Translator Android app.
+uses the separately installed Tapziq Translate Android app.
 
 ## Text handling
 
@@ -18,12 +18,12 @@ uses David Ventura's separately installed Offline Translator Android app.
   not store general typing history or read the clipboard. Gemma autocorrect and
   correction learning are separate features and are both off by default.
 - When you highlight text and tap **Translate**, Tapziq sends only that selected
-  passage to the separately installed `dev.davidv.translator` app through
-  Android's Process Text interface. Offline Translator owns its language picker,
-  downloaded packs, local inference, storage, and diagnostics. Its current
-  Process Text implementation can include the returned translation in Android's
-  diagnostic log. Tapziq receives the chosen translation in memory and does not
-  log it; Tapziq revalidates the exact source app process, field identity/type,
+  passage to the separately installed `com.tapziq.translator` app through
+  Android's Process Text interface. Tapziq Translate uses a deliberately tiny
+  English-Spanish dictionary bundled inside that app. It downloads no language
+  packs, uses no model or translation API, makes no network requests, and leaves
+  unknown vocabulary unchanged. Tapziq receives the chosen translation and does
+  not log it; Tapziq revalidates the exact source app process, field identity/type,
   document, and selection, and shows a preview. It changes the field only after
   you tap **Apply** and a second revalidation succeeds. Canceling, changing the
   editor, losing the secure editor connection, or killing Tapziq fails closed.
@@ -50,7 +50,7 @@ uses David Ventura's separately installed Offline Translator Android app.
   in Tapziq's process. Tapziq does not put editor text into its own network
   request, URL, log, model download, analytics event, or crash report. Translation
   text crosses the on-device process boundary described above and is governed by
-  the separately installed Offline Translator app while it handles the request.
+  the separately installed Tapziq Translate app while it handles the request.
 - Unless correction learning is separately enabled, Tapziq keeps the text and
   suggestion only in memory long enough to show the manual result or safely
   complete an enabled automatic check. Tapziq does not save either one.
@@ -92,10 +92,11 @@ pinned in Tapziq's source. Download requests contain ordinary HTTP metadata such
 as Tapziq's user agent and the device's IP address; they never contain keyboard
 or proofreading text.
 
-Offline Translator is installed and operated separately. Its language-pack
-downloads and other network behavior are not Tapziq network requests and are
-governed by that app. Tapziq does not bundle or copy its APK, native libraries,
-translation models, or stored settings.
+Tapziq Translate is installed and operated separately. Its fixed vocabulary is
+bundled directly in that app; it has no downloadable language packs, model,
+translation API, or runtime network access. Installing or updating its APK from
+GitHub uses the browser or installer chosen by the user. Tapziq Keyboard does not
+bundle or copy its APK, code, dictionary, or stored settings.
 
 The verified model is stored in Tapziq's app-private, no-backup directory.
 Tapziq does not enable LiteRT-LM's persistent optimized-weight cache. Other
@@ -118,9 +119,10 @@ about 2.59 GB for the model plus download headroom, and enough memory to load th
 model. This release configures English correction. A missing, corrupt, or
 unsupported model fails closed and leaves ordinary keyboard input available.
 
-Translation requires a compatible, separately installed Offline Translator app
-and the relevant downloaded language packs. Tapziq's browser-only edition cannot
-access that Android app or selections in other browser/app fields.
+Translation requires a compatible, separately installed Tapziq Translate app.
+Its intentionally small bundled dictionary supports only English and Spanish and
+leaves unknown vocabulary unchanged. Tapziq's browser-only edition cannot access
+that Android app or selections in other browser/app fields.
 
 ## Contact
 
