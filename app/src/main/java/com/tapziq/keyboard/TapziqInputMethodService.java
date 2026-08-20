@@ -1750,7 +1750,7 @@ public final class TapziqInputMethodService extends InputMethodService {
                         true
                 );
         if (preliminaryDecision == TranslationReturnPolicy.Decision.WAIT) {
-            // Offline Translator, the bridge, and TYPE_NULL transition windows can briefly own
+            // Tapziq Translate, the bridge, and TYPE_NULL transition windows can briefly own
             // the IME. Do not inspect or discard their text; wait for the bounded source return.
             return;
         }

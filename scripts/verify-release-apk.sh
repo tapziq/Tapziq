@@ -96,6 +96,14 @@ if grep -Fq 'application-debuggable' <<< "$badging"; then
   printf 'Release APK is debuggable.\n' >&2
   exit 1
 fi
+manifest_tree="$($aapt2 dump xmltree "$apk_path" --file AndroidManifest.xml)"
+if ! awk \
+    -v expected_package='com.tapziq.translator' \
+    -f "$repo_root/scripts/has-manifest-query-package.awk" \
+    <<< "$manifest_tree"; then
+  printf 'Release APK does not declare Tapziq Translate package visibility.\n' >&2
+  exit 1
+fi
 actual_permissions="$(sed -n \
   "s/^uses-permission: name='\\([^']*\\)'.*/\\1/p" <<< "$badging" | sort -u)"
 expected_permissions="android.permission.INTERNET"
@@ -150,6 +158,7 @@ fi
 
 printf 'Verified package: com.tapziq.keyboard %s (%s)\n' \
   "$expected_version_name" "$expected_version_code"
+printf 'Verified companion visibility: com.tapziq.translator\n'
 printf 'Verified source commit: %s\n' "$embedded_source_commit"
 printf 'Verified certificate SHA-256: %s\n' "$actual_certificate"
 printf 'Verified APK SHA-256: %s\n' "$apk_sha256"

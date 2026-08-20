@@ -152,7 +152,7 @@ public final class MainActivity extends Activity {
         translationActionButton = secondaryButton(
                 getString(R.string.translation_app_install)
         );
-        translationActionButton.setOnClickListener(view -> openOfflineTranslator());
+        translationActionButton.setOnClickListener(view -> openTapziqTranslator());
         LinearLayout.LayoutParams translationActionParams = buttonParams();
         translationActionParams.topMargin = dp(10);
         translationActionParams.bottomMargin = dp(22);
@@ -333,7 +333,7 @@ public final class MainActivity extends Activity {
         if (translationStatusView == null || translationActionButton == null) {
             return;
         }
-        boolean available = OfflineTranslatorContract.isAvailable(this);
+        boolean available = TapziqTranslatorContract.isAvailable(this);
         translationStatusView.setText(available
                 ? R.string.translation_app_ready
                 : R.string.translation_app_not_installed);
@@ -342,12 +342,12 @@ public final class MainActivity extends Activity {
                 : R.string.translation_app_install);
     }
 
-    private void openOfflineTranslator() {
-        Intent intent = OfflineTranslatorContract.isAvailable(this)
-                ? OfflineTranslatorContract.launchIntent(this)
+    private void openTapziqTranslator() {
+        Intent intent = TapziqTranslatorContract.isAvailable(this)
+                ? TapziqTranslatorContract.launchIntent(this)
                 : null;
         if (intent == null) {
-            intent = OfflineTranslatorContract.downloadIntent();
+            intent = TapziqTranslatorContract.downloadIntent();
         }
         try {
             startActivity(intent);

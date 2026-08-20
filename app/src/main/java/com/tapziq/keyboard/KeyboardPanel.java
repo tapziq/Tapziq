@@ -409,7 +409,7 @@ final class KeyboardPanel extends LinearLayout {
             case PROOFREAD:
                 return "Proofread with local Gemma 4";
             case TRANSLATE:
-                return "Translate selection with Offline Translator";
+                return "Translate selection with Tapziq Translate";
             case TEXT:
             default:
                 return key.label;

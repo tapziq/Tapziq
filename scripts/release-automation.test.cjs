@@ -65,6 +65,11 @@ const apkVerifierScript = readFileSync(
   path.join(repositoryRoot, "scripts", "verify-release-apk.sh"),
   "utf8",
 );
+const manifestQueryVerifierPath = path.join(
+  repositoryRoot,
+  "scripts",
+  "has-manifest-query-package.awk",
+);
 const thirdPartyNotices = readFileSync(
   path.join(repositoryRoot, "THIRD_PARTY_NOTICES.md"),
   "utf8",
@@ -694,6 +699,47 @@ test("APK verification permits only the Gemma model download network permission"
   assert.doesNotMatch(apkVerifierScript, /DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION/);
   assert.match(apkVerifierScript, /actual_permissions/);
   assert.match(apkVerifierScript, /expected_permissions/);
+});
+
+test("APK verification requires Tapziq Translate package visibility", () => {
+  assert.match(apkVerifierScript, /dump xmltree/);
+  assert.match(apkVerifierScript, /has-manifest-query-package\.awk/);
+  assert.match(apkVerifierScript, /does not declare Tapziq Translate package visibility/);
+
+  function recognizesQuery(manifestTree) {
+    return spawnSync(
+      "awk",
+      [
+        "-v",
+        "expected_package=com.tapziq.translator",
+        "-f",
+        manifestQueryVerifierPath,
+      ],
+      { encoding: "utf8", input: manifestTree },
+    ).status === 0;
+  }
+
+  assert.equal(recognizesQuery(`
+  E: manifest (line=2)
+      E: queries (line=13)
+          E: package (line=14)
+            A: http://schemas.android.com/apk/res/android:name(0x01010003)="com.tapziq.translator"
+      E: application (line=17)
+  `), true);
+  assert.equal(recognizesQuery(`
+  E: manifest (line=2)
+      E: queries (line=13)
+          E: package (line=14)
+            A: http://schemas.android.com/apk/res/android:name(0x01010003)="example.other"
+      E: application (line=17)
+        A: http://schemas.android.com/apk/res/android:label(0x01010001)="com.tapziq.translator"
+  `), false);
+  assert.equal(recognizesQuery(`
+  E: manifest (line=2)
+      E: application (line=17)
+          E: meta-data (line=18)
+            A: http://schemas.android.com/apk/res/android:name(0x01010003)="com.tapziq.translator"
+  `), false);
 });
 
 test("production smoke test installs and types through the selected IME", () => {

@@ -2,13 +2,6 @@
 
 # Third-party notices
 
-Tapziq optionally interoperates with David Ventura's separately installed
-[`offline-translator`](https://github.com/DavidVentura/offline-translator)
-Android app through the platform Process Text interface. Offline Translator is
-licensed under GPL-3.0-or-later and is not bundled, copied, linked, or distributed
-inside Tapziq; its APK, native engine, language packs, and data remain governed
-by that separate project and installation.
-
 Tapziq can download and use Google Gemma 4 E2B-it. The separately downloaded
 `gemma-4-E2B-it.litertlm` model artifact is distributed under the Apache
 License, Version 2.0, and is not bundled in the Tapziq APK. Model details and
